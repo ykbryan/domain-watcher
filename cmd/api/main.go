@@ -17,6 +17,7 @@ import (
 	"github.com/joho/godotenv"
 
 	"github.com/ykbryan/domain-watcher/api/handlers"
+	"github.com/ykbryan/domain-watcher/internal/alert"
 	"github.com/ykbryan/domain-watcher/internal/enricher"
 	"github.com/ykbryan/domain-watcher/internal/enricher/sources/abusech"
 	"github.com/ykbryan/domain-watcher/internal/enricher/sources/abuseipdb"
@@ -123,10 +124,27 @@ func main() {
 	// Monitoring: scheduler ticks, enqueues due scans, diffs completed ones.
 	monitorStore := store.NewMonitoredDomains(dbpool)
 	alertStore := store.NewAlerts(dbpool)
+
+	// Alert channels — conditional registration mirrors the enricher pattern.
+	// Lark is per-monitor (webhook on the row), no global config required.
+	// Telegram needs a global bot token. Email needs SMTP globals.
+	dispatcher := alert.NewDispatcher(
+		alert.NewLark(),
+		alert.NewTelegram(os.Getenv("TELEGRAM_BOT_TOKEN")),
+		alert.NewEmail(alert.SMTPConfig{
+			Host: os.Getenv("SMTP_HOST"),
+			Port: getEnv("SMTP_PORT", "587"),
+			User: os.Getenv("SMTP_USER"),
+			Pass: os.Getenv("SMTP_PASS"),
+			From: os.Getenv("SMTP_FROM"),
+		}),
+	)
+	slog.Info("alert channels registered", "channels", dispatcher.Channels())
+
 	scheduler := monitor.New(
 		monitor.Config{Tick: time.Duration(envInt("MONITOR_TICK_SECONDS", 60)) * time.Second},
 		monitorStore, scanJobs, permStore, alertStore, pool,
-	)
+	).WithDispatcher(dispatcher)
 	scheduler.Start(ctx)
 
 	monitors := handlers.NewMonitors(monitorStore, alertStore)

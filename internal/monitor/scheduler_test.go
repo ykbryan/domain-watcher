@@ -2,11 +2,14 @@ package monitor
 
 import (
 	"context"
+	"errors"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/google/uuid"
 
+	"github.com/ykbryan/domain-watcher/internal/alert"
 	"github.com/ykbryan/domain-watcher/internal/store"
 )
 
@@ -84,6 +87,10 @@ func (f *fakeAlertStore) Insert(_ context.Context, rows []store.AlertRow) error 
 	defer f.mu.Unlock()
 	f.rows = append(f.rows, rows...)
 	return nil
+}
+
+func (f *fakeAlertStore) MarkSent(_ context.Context, _ uuid.UUID) (int64, error) {
+	return 0, nil
 }
 
 type fakeEnqueuer struct {
@@ -167,6 +174,106 @@ func TestScheduler_DiffEmitsAlertsAndPromotes(t *testing.T) {
 	}
 	if len(m.promoted) != 1 || m.promoted[0] != mID {
 		t.Errorf("want monitor promoted; got %v", m.promoted)
+	}
+}
+
+type fakeDispatcher struct {
+	calls  atomic.Int32
+	lastB  alert.Batch
+	lastT  alert.Target
+	result []alert.Result
+}
+
+func (f *fakeDispatcher) Dispatch(_ context.Context, b alert.Batch, t alert.Target) []alert.Result {
+	f.calls.Add(1)
+	f.lastB = b
+	f.lastT = t
+	return f.result
+}
+
+type trackingAlertStore struct {
+	fakeAlertStore
+	markCalls atomic.Int32
+}
+
+func (t *trackingAlertStore) MarkSent(context.Context, uuid.UUID) (int64, error) {
+	t.markCalls.Add(1)
+	return int64(len(t.rows)), nil
+}
+
+func TestScheduler_DispatcherReceivesBatch_AndMarksSent(t *testing.T) {
+	mID := uuid.New()
+	curr := uuid.New()
+	last := uuid.New()
+	email := "user@example.com"
+
+	m := newFakeMonitorStore()
+	m.dueForDiff = []store.MonitoredDomain{{
+		ID: mID, Domain: "example.com",
+		CurrentScanID: &curr, LastScanID: &last,
+		OwnerEmail:    &email,
+		AlertChannels: []byte(`{"lark_webhook":"https://lark.test/hook","telegram_chat_id":"42","email":true}`),
+	}}
+	crit := "CRITICAL"
+	score := 88
+	perms := &fakePermReader{data: map[uuid.UUID][]store.PermutationResult{
+		last: {{Domain: "old.test", RiskBand: &crit}},
+		curr: {
+			{Domain: "old.test", RiskBand: &crit},
+			{Domain: "new1.test", RiskBand: &crit, RiskScore: &score},
+			{Domain: "new2.test", RiskBand: &crit, RiskScore: &score},
+		},
+	}}
+	alerts := &trackingAlertStore{}
+	disp := &fakeDispatcher{result: []alert.Result{{Channel: "lark", Err: nil}}}
+
+	s := New(Config{}, m, &fakeJobStore{}, perms, alerts, &fakeEnqueuer{}).WithDispatcher(disp)
+	s.Pass(context.Background())
+
+	if disp.calls.Load() != 1 {
+		t.Fatalf("dispatcher should be called once, got %d", disp.calls.Load())
+	}
+	if len(disp.lastB.Items) != 2 {
+		t.Errorf("batch items: got %d want 2", len(disp.lastB.Items))
+	}
+	if disp.lastT.LarkWebhook != "https://lark.test/hook" {
+		t.Errorf("lark webhook not parsed: %q", disp.lastT.LarkWebhook)
+	}
+	if disp.lastT.TelegramChatID != "42" {
+		t.Errorf("telegram chat id not parsed: %q", disp.lastT.TelegramChatID)
+	}
+	if !disp.lastT.Email || disp.lastT.OwnerEmail != email {
+		t.Errorf("email target wrong: email=%v owner=%q", disp.lastT.Email, disp.lastT.OwnerEmail)
+	}
+	if alerts.markCalls.Load() != 1 {
+		t.Errorf("MarkSent should fire once on success; got %d", alerts.markCalls.Load())
+	}
+}
+
+func TestScheduler_DispatcherAllFail_NoMarkSent(t *testing.T) {
+	mID := uuid.New()
+	curr := uuid.New()
+	last := uuid.New()
+
+	m := newFakeMonitorStore()
+	m.dueForDiff = []store.MonitoredDomain{{
+		ID: mID, Domain: "example.com",
+		CurrentScanID: &curr, LastScanID: &last,
+		AlertChannels: []byte(`{"lark_webhook":"https://x/hook"}`),
+	}}
+	crit := "CRITICAL"
+	perms := &fakePermReader{data: map[uuid.UUID][]store.PermutationResult{
+		last: {},
+		curr: {{Domain: "new.test", RiskBand: &crit}},
+	}}
+	alerts := &trackingAlertStore{}
+	disp := &fakeDispatcher{result: []alert.Result{{Channel: "lark", Err: errors.New("boom")}}}
+
+	s := New(Config{}, m, &fakeJobStore{}, perms, alerts, &fakeEnqueuer{}).WithDispatcher(disp)
+	s.Pass(context.Background())
+
+	if alerts.markCalls.Load() != 0 {
+		t.Errorf("MarkSent should not fire when all channels fail; got %d", alerts.markCalls.Load())
 	}
 }
 

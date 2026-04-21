@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/ykbryan/domain-watcher/internal/alert"
 	"github.com/ykbryan/domain-watcher/internal/store"
 )
 
@@ -33,6 +34,13 @@ type PermReader interface {
 // AlertStore is the sink for new alerts.
 type AlertStore interface {
 	Insert(ctx context.Context, rows []store.AlertRow) error
+	MarkSent(ctx context.Context, monitorID uuid.UUID) (int64, error)
+}
+
+// Dispatcher fans a batch of new alerts out to configured channels.
+// Optional — scheduler works without one (alerts just stay in DB).
+type Dispatcher interface {
+	Dispatch(ctx context.Context, batch alert.Batch, target alert.Target) []alert.Result
 }
 
 // Enqueuer hands a scan_id to the worker pool.
@@ -45,12 +53,13 @@ type Config struct {
 }
 
 type Scheduler struct {
-	cfg      Config
-	monitors MonitorStore
-	jobs     ScanJobStore
-	perms    PermReader
-	alerts   AlertStore
-	pool     Enqueuer
+	cfg        Config
+	monitors   MonitorStore
+	jobs       ScanJobStore
+	perms      PermReader
+	alerts     AlertStore
+	pool       Enqueuer
+	dispatcher Dispatcher // optional; nil = alerts persisted but not sent
 
 	wg   sync.WaitGroup
 	stop chan struct{}
@@ -70,6 +79,12 @@ func New(cfg Config, monitors MonitorStore, jobs ScanJobStore, perms PermReader,
 		pool:     pool,
 		stop:     make(chan struct{}),
 	}
+}
+
+// WithDispatcher enables alert dispatch. Call before Start.
+func (s *Scheduler) WithDispatcher(d Dispatcher) *Scheduler {
+	s.dispatcher = d
+	return s
 }
 
 // Start spawns the ticker goroutine. Safe to call once.
@@ -189,6 +204,71 @@ func (s *Scheduler) diffOne(ctx context.Context, m store.MonitoredDomain) {
 		return
 	}
 	slog.Info("alerts emitted", "monitor", m.ID, "count", len(rows))
+
+	if s.dispatcher != nil {
+		s.dispatch(ctx, m, newAlerts)
+	}
+}
+
+// dispatch parses the monitor's alert_channels JSON and fires the batch
+// through every configured channel. Runs on a detached ctx so ticker
+// cancellation doesn't drop a send mid-flight.
+func (s *Scheduler) dispatch(parentCtx context.Context, m store.MonitoredDomain, items []store.PermutationResult) {
+	dispatchCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	_ = parentCtx // dispatch uses detached ctx; parentCtx kept for future cancellation semantics
+
+	target := parseTarget(m)
+	batch := alert.Batch{
+		MonitorID:    m.ID,
+		TargetDomain: m.Domain,
+		Items:        make([]alert.Item, 0, len(items)),
+	}
+	if m.CurrentScanID != nil {
+		batch.ScanID = *m.CurrentScanID
+	}
+	for _, it := range items {
+		score := 0
+		band := ""
+		if it.RiskScore != nil {
+			score = *it.RiskScore
+		}
+		if it.RiskBand != nil {
+			band = *it.RiskBand
+		}
+		batch.Items = append(batch.Items, alert.Item{Domain: it.Domain, RiskScore: score, RiskBand: band})
+	}
+
+	results := s.dispatcher.Dispatch(dispatchCtx, batch, target)
+	if alert.AnySuccess(results) {
+		if n, err := s.alerts.MarkSent(dispatchCtx, m.ID); err != nil {
+			slog.Warn("mark sent failed", "monitor", m.ID, "err", err)
+		} else {
+			slog.Info("alerts dispatched", "monitor", m.ID, "marked_sent", n)
+		}
+	}
+}
+
+// parseTarget reads the monitored_domain's alert_channels JSON into a
+// typed alert.Target. Unknown/missing fields fall back to zero values.
+func parseTarget(m store.MonitoredDomain) alert.Target {
+	var raw struct {
+		LarkWebhook    string `json:"lark_webhook"`
+		TelegramChatID string `json:"telegram_chat_id"`
+		Email          bool   `json:"email"`
+	}
+	if len(m.AlertChannels) > 0 {
+		_ = json.Unmarshal(m.AlertChannels, &raw)
+	}
+	t := alert.Target{
+		LarkWebhook:    raw.LarkWebhook,
+		TelegramChatID: raw.TelegramChatID,
+		Email:          raw.Email,
+	}
+	if m.OwnerEmail != nil {
+		t.OwnerEmail = *m.OwnerEmail
+	}
+	return t
 }
 
 func (s *Scheduler) enqueueDue(ctx context.Context) {

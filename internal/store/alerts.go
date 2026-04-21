@@ -59,6 +59,20 @@ func (a *Alerts) Insert(ctx context.Context, rows []AlertRow) error {
 	return tx.Commit(ctx)
 }
 
+// MarkSent stamps alert_sent_at=now() on every alert row whose
+// monitored_domain_id matches and alert_sent_at is still NULL.
+// Returns the number of rows updated.
+func (a *Alerts) MarkSent(ctx context.Context, monitorID uuid.UUID) (int64, error) {
+	tag, err := a.pool.Exec(ctx, `
+		UPDATE alerts SET alert_sent_at = now()
+		WHERE monitored_domain_id = $1 AND alert_sent_at IS NULL
+	`, monitorID)
+	if err != nil {
+		return 0, fmt.Errorf("mark sent: %w", err)
+	}
+	return tag.RowsAffected(), nil
+}
+
 // ListByMonitor returns alerts for one monitor, newest first.
 func (a *Alerts) ListByMonitor(ctx context.Context, monitorID uuid.UUID, limit int) ([]Alert, error) {
 	if limit <= 0 {
