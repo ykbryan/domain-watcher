@@ -17,6 +17,11 @@ import (
 	"github.com/joho/godotenv"
 
 	"github.com/ykbryan/domain-watcher/api/handlers"
+	"github.com/ykbryan/domain-watcher/internal/enricher"
+	"github.com/ykbryan/domain-watcher/internal/enricher/sources/abusech"
+	"github.com/ykbryan/domain-watcher/internal/enricher/sources/certwatch"
+	"github.com/ykbryan/domain-watcher/internal/enricher/sources/openphish"
+	"github.com/ykbryan/domain-watcher/internal/enricher/sources/rdap"
 	"github.com/ykbryan/domain-watcher/internal/resolver"
 	"github.com/ykbryan/domain-watcher/internal/store"
 )
@@ -50,11 +55,22 @@ func main() {
 	}
 	defer pool.Close()
 
+	abusechKey := os.Getenv("ABUSECH_AUTH_KEY")
+	sources := []enricher.Source{
+		rdap.New(),
+		certwatch.New(),
+		abusech.NewURLhaus(abusechKey),
+		abusech.NewThreatFox(abusechKey),
+		openphish.New(),
+	}
+
 	scans := handlers.NewScans(
 		store.NewScanJobs(pool),
 		store.NewPermutations(pool),
+		store.NewFindings(pool),
 		handlers.ScansConfig{
 			Resolver: resolver.Config{Upstreams: parseUpstreams(os.Getenv("DNS_UPSTREAMS"))},
+			Enricher: handlers.EnricherConfig{Sources: sources},
 		},
 	)
 

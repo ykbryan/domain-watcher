@@ -25,22 +25,28 @@ type Permutations struct {
 
 func NewPermutations(p *pgxpool.Pool) *Permutations { return &Permutations{pool: p} }
 
-// BulkInsert writes all rows for a scan in one COPY batch.
-func (p *Permutations) BulkInsert(ctx context.Context, scanJobID uuid.UUID, rows []PermutationRow) error {
+// BulkInsert writes all rows for a scan in one COPY batch and returns the
+// generated UUIDs in the same order as input. Callers need these IDs to
+// attach subsequent findings.
+func (p *Permutations) BulkInsert(ctx context.Context, scanJobID uuid.UUID, rows []PermutationRow) ([]uuid.UUID, error) {
 	if len(rows) == 0 {
-		return nil
+		return nil, nil
+	}
+	ids := make([]uuid.UUID, len(rows))
+	for i := range ids {
+		ids[i] = uuid.New()
 	}
 	source := pgx.CopyFromSlice(len(rows), func(i int) ([]any, error) {
 		r := rows[i]
-		return []any{scanJobID, r.Domain, nilToEmpty(r.DNSA), nilToEmpty(r.DNSMX), nilToEmpty(r.DNSNS), r.IsLive}, nil
+		return []any{ids[i], scanJobID, r.Domain, nilToEmpty(r.DNSA), nilToEmpty(r.DNSMX), nilToEmpty(r.DNSNS), r.IsLive}, nil
 	})
 	_, err := p.pool.CopyFrom(ctx, pgx.Identifier{"permutations"},
-		[]string{"scan_job_id", "domain", "dns_a", "dns_mx", "dns_ns", "is_live"},
+		[]string{"id", "scan_job_id", "domain", "dns_a", "dns_mx", "dns_ns", "is_live"},
 		source)
 	if err != nil {
-		return fmt.Errorf("copy permutations: %w", err)
+		return nil, fmt.Errorf("copy permutations: %w", err)
 	}
-	return nil
+	return ids, nil
 }
 
 // nilToEmpty converts a nil slice to an empty slice so COPY FROM populates

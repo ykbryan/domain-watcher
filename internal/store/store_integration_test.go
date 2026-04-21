@@ -79,8 +79,12 @@ func TestPermutationBulkInsertAndCount(t *testing.T) {
 		{Domain: "exampel.com", DNSA: nil, DNSMX: nil, DNSNS: nil, IsLive: false},
 		{Domain: "xample.com", DNSA: []string{"5.6.7.8"}, DNSMX: []string{"aspmx.l.google.com."}, DNSNS: nil, IsLive: true},
 	}
-	if err := d.perms.BulkInsert(ctx, id, rows); err != nil {
+	ids, err := d.perms.BulkInsert(ctx, id, rows)
+	if err != nil {
 		t.Fatalf("bulk insert: %v", err)
+	}
+	if len(ids) != len(rows) {
+		t.Errorf("want %d returned ids, got %d", len(rows), len(ids))
 	}
 	total, live, err := d.perms.CountByScan(ctx, id)
 	if err != nil {

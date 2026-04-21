@@ -19,13 +19,15 @@ import (
 	"github.com/ykbryan/domain-watcher/internal/store"
 )
 
-// fakeScanStore implements ScanStore and PermStore with an in-memory log.
+// fakeScanStore implements ScanStore, PermStore, and FindingStore with an
+// in-memory log so handler tests don't need a real Postgres.
 type fakeScanStore struct {
 	mu        sync.Mutex
-	created   []string                       // target domains
+	created   []string
 	completed []uuid.UUID
 	failed    map[uuid.UUID]string
 	rows      map[uuid.UUID][]store.PermutationRow
+	findings  []store.FindingRow
 }
 
 func newFakeStore() *fakeScanStore {
@@ -53,10 +55,30 @@ func (f *fakeScanStore) MarkFailed(_ context.Context, id uuid.UUID, msg string) 
 	f.failed[id] = msg
 	return nil
 }
-func (f *fakeScanStore) BulkInsert(_ context.Context, id uuid.UUID, rows []store.PermutationRow) error {
+func (f *fakeScanStore) BulkInsert(_ context.Context, id uuid.UUID, rows []store.PermutationRow) ([]uuid.UUID, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.rows[id] = append(f.rows[id], rows...)
+	ids := make([]uuid.UUID, len(rows))
+	for i := range ids {
+		ids[i] = uuid.New()
+	}
+	return ids, nil
+}
+
+// fakeFindingStore implements FindingStore. Kept separate because both stores
+// carry a method named BulkInsert with different signatures.
+type fakeFindingStore struct {
+	mu      sync.Mutex
+	parent  *fakeScanStore
+}
+
+func (f *fakeFindingStore) BulkInsert(_ context.Context, rows []store.FindingRow) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.parent.mu.Lock()
+	f.parent.findings = append(f.parent.findings, rows...)
+	f.parent.mu.Unlock()
 	return nil
 }
 
@@ -93,7 +115,7 @@ func TestPostQuick_Success(t *testing.T) {
 	defer stop()
 
 	fake := newFakeStore()
-	h := NewScans(fake, fake, ScansConfig{
+	h := NewScans(fake, fake, &fakeFindingStore{parent: fake}, ScansConfig{
 		QuickMaxPerms: 50,
 		QuickTimeout:  5 * time.Second,
 		TopN:          5,
@@ -142,7 +164,7 @@ func TestPostQuick_Success(t *testing.T) {
 
 func TestPostQuick_InvalidDomain(t *testing.T) {
 	fake := newFakeStore()
-	h := NewScans(fake, fake, ScansConfig{})
+	h := NewScans(fake, fake, &fakeFindingStore{parent: fake}, ScansConfig{})
 
 	for _, body := range []string{`{}`, `{"domain":""}`, `{"domain":"no-dot"}`, `not-json`} {
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/scans/quick", bytes.NewReader([]byte(body)))
@@ -166,7 +188,7 @@ func (e *errStore) Create(_ context.Context, _, _ string) (uuid.UUID, error) {
 
 func TestPostQuick_StoreFailure(t *testing.T) {
 	e := &errStore{fakeScanStore: *newFakeStore()}
-	h := NewScans(e, &e.fakeScanStore, ScansConfig{})
+	h := NewScans(e, &e.fakeScanStore, &fakeFindingStore{parent: &e.fakeScanStore}, ScansConfig{})
 	body, _ := json.Marshal(quickRequest{Domain: "example.com"})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/scans/quick", bytes.NewReader(body))
 	rec := httptest.NewRecorder()
