@@ -137,6 +137,8 @@ Required:
 |---|---|
 | `DATABASE_URL` | `postgres://…` connection string |
 
+The app scopes all DDL and queries to a dedicated schema (default `domainwatcher`, overridable via `DB_SCHEMA`). The schema is auto-created on startup, and `search_path` is set on every pool connection — table names stay unqualified in the code. This makes it safe to run on a shared Postgres instance (e.g. self-hosted Supabase) without colliding with `public` or other apps.
+
 Core tunables (all have sensible defaults):
 
 | Variable | Default | Purpose |

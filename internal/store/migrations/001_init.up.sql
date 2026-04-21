@@ -1,4 +1,6 @@
-CREATE EXTENSION IF NOT EXISTS pgcrypto;
+-- gen_random_uuid() is built into PostgreSQL 13+; no pgcrypto extension
+-- required. Supabase (PG15+) and docker-compose postgres:16-alpine both
+-- ship with it available.
 
 CREATE TABLE scan_jobs (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),

@@ -71,13 +71,15 @@ func TestURLhaus_NoResults_Benign(t *testing.T) {
 // ThreatFox
 
 func TestThreatFox_Match_High(t *testing.T) {
+	// Server emits the raw JSON shape ThreatFox actually uses when
+	// query_status="ok": data is an array of IOC objects.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(threatfoxResponse{
-			QueryStatus: "ok",
-			Data: []threatfoxIOC{
-				{IOC: "evil.test", ThreatType: "payload_delivery", MalwarePrintable: "Emotet", LastSeen: "2026-04-01 10:00:00"},
-			},
-		})
+		_, _ = w.Write([]byte(`{
+			"query_status": "ok",
+			"data": [
+				{"ioc":"evil.test","threat_type":"payload_delivery","malware_printable":"Emotet","last_seen":"2026-04-01 10:00:00"}
+			]
+		}`))
 	}))
 	defer srv.Close()
 	s := NewThreatFoxWithEndpoint(srv.URL + "/")
@@ -87,6 +89,23 @@ func TestThreatFox_Match_High(t *testing.T) {
 	}
 	if !hasSignal(f, "threatfox_ioc", enricher.SeverityHigh) {
 		t.Errorf("expected HIGH signal, got %+v", f.RiskSignals)
+	}
+}
+
+// ThreatFox returns data as a string (e.g. "No results") when there are
+// no matches — must not produce a decode error.
+func TestThreatFox_NoResultsWithStringData(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"query_status":"no_result","data":"No results"}`))
+	}))
+	defer srv.Close()
+	s := NewThreatFoxWithEndpoint(srv.URL + "/")
+	f, err := s.Enrich(context.Background(), "clean.test")
+	if err != nil {
+		t.Fatalf("should not error when data is a string: %v", err)
+	}
+	if len(f.RiskSignals) != 0 {
+		t.Errorf("expected no signals, got %+v", f.RiskSignals)
 	}
 }
 

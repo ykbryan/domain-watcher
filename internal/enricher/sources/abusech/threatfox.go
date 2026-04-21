@@ -45,9 +45,12 @@ type threatfoxIOC struct {
 	LastSeen         string `json:"last_seen"`
 }
 
+// ThreatFox returns "data" as a []threatfoxIOC when query_status is "ok"
+// and as a bare string (e.g. "No results") otherwise. Keep it raw and
+// only try to decode the array when the status says we should.
 type threatfoxResponse struct {
-	QueryStatus string         `json:"query_status"`
-	Data        []threatfoxIOC `json:"data"`
+	QueryStatus string          `json:"query_status"`
+	Data        json.RawMessage `json:"data"`
 }
 
 func (s *ThreatFox) Enrich(ctx context.Context, domain string) (*enricher.Finding, error) {
@@ -75,13 +78,20 @@ func (s *ThreatFox) Enrich(ctx context.Context, domain string) (*enricher.Findin
 	}
 
 	f := &enricher.Finding{SourceName: threatfoxName, RawData: parsed}
-	if parsed.QueryStatus != "ok" || len(parsed.Data) == 0 {
+	if parsed.QueryStatus != "ok" {
+		return f, nil // e.g. "no_result" — Data is a string in that case
+	}
+	var iocs []threatfoxIOC
+	if err := json.Unmarshal(parsed.Data, &iocs); err != nil {
+		return nil, fmt.Errorf("decode data: %w", err)
+	}
+	if len(iocs) == 0 {
 		return f, nil
 	}
 	f.RiskSignals = append(f.RiskSignals, enricher.RiskSignal{
 		Label:    "threatfox_ioc",
 		Severity: enricher.SeverityHigh,
-		Detail:   fmt.Sprintf("%d IOC match(es), latest threat: %s", len(parsed.Data), threatSummary(parsed.Data)),
+		Detail:   fmt.Sprintf("%d IOC match(es), latest threat: %s", len(iocs), threatSummary(iocs)),
 	})
 	return f, nil
 }

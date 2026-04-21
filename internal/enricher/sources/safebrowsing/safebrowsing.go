@@ -18,7 +18,7 @@ import (
 
 const (
 	sourceName      = "safebrowsing"
-	defaultEndpoint = "https://safebrowsingapis.googleapis.com/v4/threatMatches:find"
+	defaultEndpoint = "https://safebrowsing.googleapis.com/v4/threatMatches:find"
 	httpTimeout     = 10 * time.Second
 	clientID        = "domainwatch"
 	clientVersion   = "0.1"
