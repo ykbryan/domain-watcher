@@ -19,10 +19,17 @@ import (
 	"github.com/ykbryan/domain-watcher/api/handlers"
 	"github.com/ykbryan/domain-watcher/internal/enricher"
 	"github.com/ykbryan/domain-watcher/internal/enricher/sources/abusech"
+	"github.com/ykbryan/domain-watcher/internal/enricher/sources/abuseipdb"
 	"github.com/ykbryan/domain-watcher/internal/enricher/sources/certwatch"
+	"github.com/ykbryan/domain-watcher/internal/enricher/sources/ipinfo"
 	"github.com/ykbryan/domain-watcher/internal/enricher/sources/openphish"
+	"github.com/ykbryan/domain-watcher/internal/enricher/sources/otx"
 	"github.com/ykbryan/domain-watcher/internal/enricher/sources/rdap"
+	"github.com/ykbryan/domain-watcher/internal/enricher/sources/safebrowsing"
+	"github.com/ykbryan/domain-watcher/internal/enricher/sources/urlscan"
+	"github.com/ykbryan/domain-watcher/internal/enricher/sources/virustotal"
 	"github.com/ykbryan/domain-watcher/internal/pipeline"
+	"github.com/ykbryan/domain-watcher/internal/ratelimit"
 	"github.com/ykbryan/domain-watcher/internal/resolver"
 	"github.com/ykbryan/domain-watcher/internal/store"
 	"github.com/ykbryan/domain-watcher/internal/worker"
@@ -58,12 +65,27 @@ func main() {
 	defer dbpool.Close()
 
 	abusechKey := os.Getenv("ABUSECH_AUTH_KEY")
+	rl := ratelimit.NewSpecRegistry()
+
+	// No-key sources always register; keyed sources register only if key is set.
 	sources := []enricher.Source{
 		rdap.New(),
 		certwatch.New(),
 		abusech.NewURLhaus(abusechKey),
 		abusech.NewThreatFox(abusechKey),
 		openphish.New(),
+		urlscan.New(os.Getenv("URLSCAN_API_KEY"), rl.Get("urlscan")), // search works without a key
+	}
+	sources = appendIfNotNil(sources,
+		virustotal.New(os.Getenv("VIRUSTOTAL_API_KEY"), rl.Get("virustotal")),
+		safebrowsing.New(os.Getenv("GOOGLE_SAFE_BROWSING_KEY"), rl.Get("safebrowsing")),
+		otx.New(os.Getenv("OTX_API_KEY"), rl.Get("otx")),
+		ipinfo.New(os.Getenv("IPINFO_TOKEN"), rl.Get("ipinfo")),
+		abuseipdb.New(os.Getenv("ABUSEIPDB_API_KEY"), rl.Get("abuseipdb")),
+	)
+	slog.Info("enrichers registered", "count", len(sources))
+	for _, s := range sources {
+		slog.Info("enricher", "name", s.Name())
 	}
 
 	resolverCfg := resolver.Config{Upstreams: parseUpstreams(os.Getenv("DNS_UPSTREAMS"))}
@@ -158,6 +180,41 @@ func envInt(k string, def int) int {
 		}
 	}
 	return def
+}
+
+// appendIfNotNil accepts concrete *Source pointers; a nil pointer means the
+// source's required API key was missing, so we skip it.
+func appendIfNotNil(base []enricher.Source, maybe ...enricher.Source) []enricher.Source {
+	for _, s := range maybe {
+		if !isNilSource(s) {
+			base = append(base, s)
+		}
+	}
+	return base
+}
+
+// isNilSource checks for typed-nil interface values (the "s == nil" trap).
+// Each constructor returns either *T or a nil *T — when we stuff a nil *T
+// into a non-nil interface, the interface itself is not nil.
+func isNilSource(s enricher.Source) bool {
+	if s == nil {
+		return true
+	}
+	switch v := s.(type) {
+	case *virustotal.Source:
+		return v == nil
+	case *safebrowsing.Source:
+		return v == nil
+	case *otx.Source:
+		return v == nil
+	case *ipinfo.Source:
+		return v == nil
+	case *abuseipdb.Source:
+		return v == nil
+	case *urlscan.Source:
+		return v == nil
+	}
+	return false
 }
 
 func parseUpstreams(csv string) []string {

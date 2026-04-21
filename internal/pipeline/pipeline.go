@@ -142,9 +142,15 @@ func Run(ctx context.Context, jobID uuid.UUID, domain string, opts Options, perm
 				findingRows = append(findingRows, row)
 			}
 		}
-		if err := findings.BulkInsert(ctx, findingRows); err != nil {
+		// Use a detached context for the final write so that an enrichment
+		// timeout (which consumes the scan budget) doesn't also wipe out
+		// the findings we did collect.
+		persistCtx, persistCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		if err := findings.BulkInsert(persistCtx, findingRows); err != nil {
+			persistCancel()
 			return nil, fmt.Errorf("persist findings: %w", err)
 		}
+		persistCancel()
 	}
 
 	// Score each enriched domain, collect score updates for DB.
@@ -171,9 +177,14 @@ func Run(ctx context.Context, jobID uuid.UUID, domain string, opts Options, perm
 		}
 	}
 	if len(updates) > 0 {
-		if err := perms.UpdateScores(ctx, updates); err != nil {
+		// Same rationale as the findings insert — detach so partial results
+		// aren't lost when ctx has already expired.
+		scoreCtx, scoreCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		if err := perms.UpdateScores(scoreCtx, updates); err != nil {
+			scoreCancel()
 			return nil, fmt.Errorf("update scores: %w", err)
 		}
+		scoreCancel()
 	}
 
 	// TopLiveDomains: sort scored by score DESC, take opts.TopInResponse.
