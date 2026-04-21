@@ -28,6 +28,7 @@ import (
 	"github.com/ykbryan/domain-watcher/internal/enricher/sources/safebrowsing"
 	"github.com/ykbryan/domain-watcher/internal/enricher/sources/urlscan"
 	"github.com/ykbryan/domain-watcher/internal/enricher/sources/virustotal"
+	"github.com/ykbryan/domain-watcher/internal/monitor"
 	"github.com/ykbryan/domain-watcher/internal/pipeline"
 	"github.com/ykbryan/domain-watcher/internal/ratelimit"
 	"github.com/ykbryan/domain-watcher/internal/resolver"
@@ -119,6 +120,17 @@ func main() {
 
 	async := handlers.NewAsyncScans(scanJobs, permStore, findingStore, pool)
 
+	// Monitoring: scheduler ticks, enqueues due scans, diffs completed ones.
+	monitorStore := store.NewMonitoredDomains(dbpool)
+	alertStore := store.NewAlerts(dbpool)
+	scheduler := monitor.New(
+		monitor.Config{Tick: time.Duration(envInt("MONITOR_TICK_SECONDS", 60)) * time.Second},
+		monitorStore, scanJobs, permStore, alertStore, pool,
+	)
+	scheduler.Start(ctx)
+
+	monitors := handlers.NewMonitors(monitorStore, alertStore)
+
 	r := chi.NewRouter()
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.RequestID)
@@ -130,6 +142,10 @@ func main() {
 		r.Get("/scans/{id}", async.Get)
 		r.Get("/scans/{id}/results", async.GetResults)
 		r.Get("/scans/{id}/report", async.GetReport)
+		r.Post("/monitors", monitors.Post)
+		r.Get("/monitors", monitors.List)
+		r.Delete("/monitors/{id}", monitors.Delete)
+		r.Get("/monitors/{id}/alerts", monitors.ListAlerts)
 	})
 
 	addr := ":" + getEnv("PORT", "8080")
@@ -160,6 +176,9 @@ func main() {
 	defer shutdownCancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		slog.Error("http shutdown error", "err", err)
+	}
+	if err := scheduler.Shutdown(shutdownCtx); err != nil {
+		slog.Error("scheduler shutdown error", "err", err)
 	}
 	if err := pool.Shutdown(shutdownCtx); err != nil {
 		slog.Error("worker pool shutdown error", "err", err)
