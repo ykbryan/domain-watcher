@@ -37,17 +37,38 @@ type ScanJobs struct {
 func NewScanJobs(p *pgxpool.Pool) *ScanJobs { return &ScanJobs{pool: p} }
 
 // Create inserts a new scan_jobs row in 'running' state and returns its ID.
+// Used by synchronous scans where work begins immediately.
 func (s *ScanJobs) Create(ctx context.Context, target, triggeredBy string) (uuid.UUID, error) {
+	return s.insert(ctx, target, ScanStatusRunning, triggeredBy)
+}
+
+// CreateQueued inserts a new scan_jobs row in 'queued' state and returns its ID.
+// Used by async scans; the worker calls MarkRunning when it picks the job up.
+func (s *ScanJobs) CreateQueued(ctx context.Context, target, triggeredBy string) (uuid.UUID, error) {
+	return s.insert(ctx, target, ScanStatusQueued, triggeredBy)
+}
+
+func (s *ScanJobs) insert(ctx context.Context, target, status, triggeredBy string) (uuid.UUID, error) {
 	var id uuid.UUID
 	err := s.pool.QueryRow(ctx, `
 		INSERT INTO scan_jobs (target_domain, status, triggered_by)
 		VALUES ($1, $2, $3)
 		RETURNING id
-	`, target, ScanStatusRunning, triggeredBy).Scan(&id)
+	`, target, status, triggeredBy).Scan(&id)
 	if err != nil {
 		return uuid.Nil, fmt.Errorf("insert scan_job: %w", err)
 	}
 	return id, nil
+}
+
+func (s *ScanJobs) MarkRunning(ctx context.Context, id uuid.UUID) error {
+	_, err := s.pool.Exec(ctx, `
+		UPDATE scan_jobs SET status = $1 WHERE id = $2
+	`, ScanStatusRunning, id)
+	if err != nil {
+		return fmt.Errorf("mark running: %w", err)
+	}
+	return nil
 }
 
 func (s *ScanJobs) MarkCompleted(ctx context.Context, id uuid.UUID) error {

@@ -60,7 +60,12 @@ func (f *Findings) CountBySeverity(ctx context.Context, scanJobID uuid.UUID) (ma
 		SELECT sig->>'severity' AS severity, COUNT(*)
 		FROM findings fi
 		JOIN permutations p ON p.id = fi.permutation_id
-		CROSS JOIN LATERAL jsonb_array_elements(fi.risk_signals) sig
+		CROSS JOIN LATERAL jsonb_array_elements(
+			CASE WHEN jsonb_typeof(fi.risk_signals) = 'array'
+			     THEN fi.risk_signals
+			     ELSE '[]'::jsonb
+			END
+		) sig
 		WHERE p.scan_job_id = $1
 		GROUP BY severity
 	`, scanJobID)

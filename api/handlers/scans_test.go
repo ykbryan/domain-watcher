@@ -65,6 +65,9 @@ func (f *fakeScanStore) BulkInsert(_ context.Context, id uuid.UUID, rows []store
 	}
 	return ids, nil
 }
+func (f *fakeScanStore) UpdateScores(_ context.Context, _ []store.ScoreUpdate) error {
+	return nil
+}
 
 // fakeFindingStore implements FindingStore. Kept separate because both stores
 // carry a method named BulkInsert with different signatures.
@@ -116,10 +119,11 @@ func TestPostQuick_Success(t *testing.T) {
 
 	fake := newFakeStore()
 	h := NewScans(fake, fake, &fakeFindingStore{parent: fake}, ScansConfig{
-		QuickMaxPerms: 50,
-		QuickTimeout:  5 * time.Second,
-		TopN:          5,
-		Resolver:      resolver.Config{Upstreams: []string{addr}, Workers: 10, Timeout: 1 * time.Second},
+		QuickMaxPerms:   50,
+		QuickTimeout:    5 * time.Second,
+		QuickEnrichTopN: 5,
+		TopInResponse:   5,
+		Resolver:        resolver.Config{Upstreams: []string{addr}, Workers: 10, Timeout: 1 * time.Second},
 	})
 
 	body, _ := json.Marshal(quickRequest{Domain: "live.test"})

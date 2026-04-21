@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
-	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -13,65 +12,55 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/ykbryan/domain-watcher/internal/enricher"
-	"github.com/ykbryan/domain-watcher/internal/permutation"
+	"github.com/ykbryan/domain-watcher/internal/pipeline"
 	"github.com/ykbryan/domain-watcher/internal/resolver"
 	"github.com/ykbryan/domain-watcher/internal/store"
 )
 
-// ScanStore is the subset of store operations the quick-scan handler needs.
-// It exists so tests can fake persistence without a real Postgres.
+// ScanStore is the subset of scan_job operations the handler needs.
 type ScanStore interface {
 	Create(ctx context.Context, target, triggeredBy string) (uuid.UUID, error)
 	MarkCompleted(ctx context.Context, id uuid.UUID) error
 	MarkFailed(ctx context.Context, id uuid.UUID, msg string) error
 }
 
-type PermStore interface {
-	BulkInsert(ctx context.Context, scanJobID uuid.UUID, rows []store.PermutationRow) ([]uuid.UUID, error)
-}
-
-type FindingStore interface {
-	BulkInsert(ctx context.Context, rows []store.FindingRow) error
-}
-
-// ScansConfig tunes quick-scan behavior.
+// ScansConfig tunes quick-scan behavior. Defaults apply when zero.
 type ScansConfig struct {
-	QuickMaxPerms int             // cap on permutations fed through resolver (default 1000)
-	QuickTimeout  time.Duration   // total budget for /scans/quick (default 30s)
-	TopN          int             // how many live domains to return AND enrich (default 20)
-	Resolver      resolver.Config // passed to resolver.New for each scan
-	Enricher      EnricherConfig  // enrichment options; if nil Sources, skipped
-}
-
-// EnricherConfig configures the enrichment fan-out step.
-type EnricherConfig struct {
-	Sources          []enricher.Source
-	Workers          int
-	PerSourceTimeout time.Duration
+	QuickMaxPerms    int           // cap on permutations for /scans/quick (default 1000)
+	QuickTimeout     time.Duration // total budget for /scans/quick (default 30s)
+	QuickEnrichTopN  int           // enrich top-N live in /scans/quick (default 20)
+	TopInResponse    int           // rows in response.top_live_domains (default 20)
+	Resolver         resolver.Config
+	EnricherSources  []enricher.Source
+	EnricherWorkers  int
+	EnricherTimeout  time.Duration
 }
 
 type Scans struct {
 	cfg      ScansConfig
 	jobs     ScanStore
-	perms    PermStore
-	findings FindingStore
+	perms    pipeline.PermStore
+	findings pipeline.FindingStore
 }
 
-func NewScans(jobs ScanStore, perms PermStore, findings FindingStore, cfg ScansConfig) *Scans {
+func NewScans(jobs ScanStore, perms pipeline.PermStore, findings pipeline.FindingStore, cfg ScansConfig) *Scans {
 	if cfg.QuickMaxPerms <= 0 {
 		cfg.QuickMaxPerms = 1000
 	}
 	if cfg.QuickTimeout <= 0 {
 		cfg.QuickTimeout = 30 * time.Second
 	}
-	if cfg.TopN <= 0 {
-		cfg.TopN = 20
+	if cfg.QuickEnrichTopN <= 0 {
+		cfg.QuickEnrichTopN = 20
 	}
-	if cfg.Enricher.Workers <= 0 {
-		cfg.Enricher.Workers = 10
+	if cfg.TopInResponse <= 0 {
+		cfg.TopInResponse = 20
 	}
-	if cfg.Enricher.PerSourceTimeout <= 0 {
-		cfg.Enricher.PerSourceTimeout = 8 * time.Second
+	if cfg.EnricherWorkers <= 0 {
+		cfg.EnricherWorkers = 10
+	}
+	if cfg.EnricherTimeout <= 0 {
+		cfg.EnricherTimeout = 8 * time.Second
 	}
 	return &Scans{cfg: cfg, jobs: jobs, perms: perms, findings: findings}
 }
@@ -80,28 +69,15 @@ type quickRequest struct {
 	Domain string `json:"domain"`
 }
 
-type liveDomainDTO struct {
-	Domain      string                `json:"domain"`
-	A           []string              `json:"a,omitempty"`
-	MX          []string              `json:"mx,omitempty"`
-	NS          []string              `json:"ns,omitempty"`
-	RiskSignals []enricher.RiskSignal `json:"risk_signals,omitempty"`
-}
-
 type quickResponse struct {
-	ScanID              string          `json:"scan_id"`
-	TargetDomain        string          `json:"target_domain"`
-	PermutationCount    int             `json:"permutation_count"`
-	LiveCount           int             `json:"live_count"`
-	EnrichedCount       int             `json:"enriched_count"`
-	FindingsBySeverity  map[string]int  `json:"findings_by_severity"`
-	TopLiveDomains      []liveDomainDTO `json:"top_live_domains"`
-	ElapsedMs           int64           `json:"elapsed_ms"`
+	ScanID       string `json:"scan_id"`
+	TargetDomain string `json:"target_domain"`
+	ElapsedMs    int64  `json:"elapsed_ms"`
+	*pipeline.Result
 }
 
-// PostQuick handles POST /api/v1/scans/quick.
-// Pipeline: generate → resolve → persist perms → enrich top-N live → persist
-// findings → respond. All within QuickTimeout.
+// PostQuick handles POST /api/v1/scans/quick. Synchronous; hard-capped
+// by QuickTimeout.
 func (s *Scans) PostQuick(w http.ResponseWriter, r *http.Request) {
 	var req quickRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -125,7 +101,16 @@ func (s *Scans) PostQuick(w http.ResponseWriter, r *http.Request) {
 	}
 
 	start := time.Now()
-	resp, err := s.runQuick(ctx, jobID, domain)
+	result, err := pipeline.Run(ctx, jobID, domain, pipeline.Options{
+		MaxPerms:          s.cfg.QuickMaxPerms,
+		IncludeDictionary: true,
+		EnrichTopN:        s.cfg.QuickEnrichTopN,
+		TopInResponse:     s.cfg.TopInResponse,
+		ResolverCfg:       s.cfg.Resolver,
+		Sources:           s.cfg.EnricherSources,
+		EnricherWorkers:   s.cfg.EnricherWorkers,
+		EnricherTimeout:   s.cfg.EnricherTimeout,
+	}, s.perms, s.findings)
 	if err != nil {
 		_ = s.jobs.MarkFailed(context.Background(), jobID, err.Error())
 		slog.Error("quick scan failed", "scan_id", jobID, "err", err)
@@ -136,146 +121,19 @@ func (s *Scans) PostQuick(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, status, "scan failed")
 		return
 	}
-	resp.ElapsedMs = time.Since(start).Milliseconds()
 
 	if err := s.jobs.MarkCompleted(context.Background(), jobID); err != nil {
 		slog.Warn("mark completed failed", "scan_id", jobID, "err", err)
 	}
 
+	resp := quickResponse{
+		ScanID:       jobID.String(),
+		TargetDomain: domain,
+		ElapsedMs:    time.Since(start).Milliseconds(),
+		Result:       result,
+	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)
-}
-
-func (s *Scans) runQuick(ctx context.Context, jobID uuid.UUID, domain string) (*quickResponse, error) {
-	perms, err := permutation.Generate(ctx, domain, permutation.Options{
-		Max:               s.cfg.QuickMaxPerms,
-		IncludeDictionary: true,
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	rv := resolver.New(s.cfg.Resolver)
-	results := rv.Resolve(ctx, perms)
-
-	rows := make([]store.PermutationRow, 0, len(results))
-	for _, res := range results {
-		rows = append(rows, store.PermutationRow{
-			Domain: res.Domain,
-			DNSA:   ipsToStrings(res.A),
-			DNSMX:  res.MX,
-			DNSNS:  res.NS,
-			IsLive: res.IsLive,
-		})
-	}
-	permIDs, err := s.perms.BulkInsert(ctx, jobID, rows)
-	if err != nil {
-		return nil, err
-	}
-
-	// live indices (into results / permIDs)
-	var liveIdx []int
-	for i, res := range results {
-		if res.IsLive {
-			liveIdx = append(liveIdx, i)
-		}
-	}
-
-	topIdx := liveIdx
-	if len(topIdx) > s.cfg.TopN {
-		topIdx = topIdx[:s.cfg.TopN]
-	}
-
-	// Enrich top-N live domains.
-	findingsByDomain := map[string][]enricher.Finding{}
-	severityCounts := map[string]int{}
-	if len(s.cfg.Enricher.Sources) > 0 && len(topIdx) > 0 {
-		runner := enricher.NewRunner(s.cfg.Enricher.Sources, s.cfg.Enricher.Workers, s.cfg.Enricher.PerSourceTimeout)
-		topDomains := make([]string, len(topIdx))
-		for i, idx := range topIdx {
-			topDomains[i] = results[idx].Domain
-		}
-		batch := runner.FanOut(ctx, topDomains)
-
-		findingRows := make([]store.FindingRow, 0, len(batch)*len(s.cfg.Enricher.Sources))
-		for i, findings := range batch {
-			permID := permIDs[topIdx[i]]
-			findingsByDomain[topDomains[i]] = findings
-			for _, f := range findings {
-				for _, sig := range f.RiskSignals {
-					severityCounts[string(sig.Severity)]++
-				}
-				row, err := toFindingRow(permID, f)
-				if err != nil {
-					slog.Warn("skipping finding encode", "err", err)
-					continue
-				}
-				findingRows = append(findingRows, row)
-			}
-		}
-		if err := s.findings.BulkInsert(ctx, findingRows); err != nil {
-			return nil, err
-		}
-	}
-
-	topDTO := make([]liveDomainDTO, 0, len(topIdx))
-	for _, idx := range topIdx {
-		res := results[idx]
-		dto := liveDomainDTO{
-			Domain: res.Domain,
-			A:      ipsToStrings(res.A),
-			MX:     res.MX,
-			NS:     res.NS,
-		}
-		for _, f := range findingsByDomain[res.Domain] {
-			dto.RiskSignals = append(dto.RiskSignals, f.RiskSignals...)
-		}
-		topDTO = append(topDTO, dto)
-	}
-
-	return &quickResponse{
-		ScanID:             jobID.String(),
-		TargetDomain:       domain,
-		PermutationCount:   len(perms),
-		LiveCount:          len(liveIdx),
-		EnrichedCount:      len(topIdx),
-		FindingsBySeverity: severityCounts,
-		TopLiveDomains:     topDTO,
-	}, nil
-}
-
-func toFindingRow(permID uuid.UUID, f enricher.Finding) (store.FindingRow, error) {
-	signals, err := json.Marshal(f.RiskSignals)
-	if err != nil {
-		return store.FindingRow{}, err
-	}
-	var raw json.RawMessage
-	if f.RawData != nil {
-		b, err := json.Marshal(f.RawData)
-		if err != nil {
-			return store.FindingRow{}, err
-		}
-		raw = b
-	}
-	return store.FindingRow{
-		PermutationID: permID,
-		SourceName:    f.SourceName,
-		RiskSignals:   signals,
-		RawData:       raw,
-		FetchedAt:     f.FetchedAt,
-		Error:         f.Error,
-	}, nil
-}
-
-func ipsToStrings(ips []net.IP) []string {
-	if len(ips) == 0 {
-		return nil
-	}
-	out := make([]string, len(ips))
-	for i, ip := range ips {
-		out[i] = ip.String()
-	}
-	return out
 }
 
 func writeErr(w http.ResponseWriter, status int, msg string) {

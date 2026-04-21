@@ -7,10 +7,10 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
-
-	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -22,8 +22,10 @@ import (
 	"github.com/ykbryan/domain-watcher/internal/enricher/sources/certwatch"
 	"github.com/ykbryan/domain-watcher/internal/enricher/sources/openphish"
 	"github.com/ykbryan/domain-watcher/internal/enricher/sources/rdap"
+	"github.com/ykbryan/domain-watcher/internal/pipeline"
 	"github.com/ykbryan/domain-watcher/internal/resolver"
 	"github.com/ykbryan/domain-watcher/internal/store"
+	"github.com/ykbryan/domain-watcher/internal/worker"
 )
 
 const version = "0.1.0"
@@ -48,12 +50,12 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	pool, err := store.NewPool(ctx, dbURL)
+	dbpool, err := store.NewPool(ctx, dbURL)
 	if err != nil {
 		slog.Error("db connect failed", "err", err)
 		os.Exit(1)
 	}
-	defer pool.Close()
+	defer dbpool.Close()
 
 	abusechKey := os.Getenv("ABUSECH_AUTH_KEY")
 	sources := []enricher.Source{
@@ -64,23 +66,48 @@ func main() {
 		openphish.New(),
 	}
 
-	scans := handlers.NewScans(
-		store.NewScanJobs(pool),
-		store.NewPermutations(pool),
-		store.NewFindings(pool),
-		handlers.ScansConfig{
-			Resolver: resolver.Config{Upstreams: parseUpstreams(os.Getenv("DNS_UPSTREAMS"))},
-			Enricher: handlers.EnricherConfig{Sources: sources},
+	resolverCfg := resolver.Config{Upstreams: parseUpstreams(os.Getenv("DNS_UPSTREAMS"))}
+	scanJobs := store.NewScanJobs(dbpool)
+	permStore := store.NewPermutations(dbpool)
+	findingStore := store.NewFindings(dbpool)
+
+	// Sync /scans/quick handler.
+	scans := handlers.NewScans(scanJobs, permStore, findingStore, handlers.ScansConfig{
+		Resolver:        resolverCfg,
+		EnricherSources: sources,
+	})
+
+	// Worker pool for async /scans.
+	pool := worker.New(
+		worker.Config{
+			Workers:   envInt("SCAN_WORKER_COUNT", 3),
+			QueueSize: 100,
+			JobBudget: time.Duration(envInt("SCAN_TIMEOUT_SECONDS", 120)) * time.Second,
+		},
+		scanJobs, permStore, findingStore,
+		pipeline.Options{
+			MaxPerms:          envInt("MAX_PERMUTATIONS", 2000),
+			IncludeDictionary: true,
+			EnrichTopN:        0, // async enriches all live
+			ResolverCfg:       resolverCfg,
+			Sources:           sources,
 		},
 	)
+	pool.Start(ctx)
+
+	async := handlers.NewAsyncScans(scanJobs, permStore, findingStore, pool)
 
 	r := chi.NewRouter()
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.RequestID)
 	r.Use(middleware.Logger)
-	r.Get("/healthz", handlers.Health(pool, version))
+	r.Get("/healthz", handlers.Health(dbpool, version))
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Post("/scans/quick", scans.PostQuick)
+		r.Post("/scans", async.Post)
+		r.Get("/scans/{id}", async.Get)
+		r.Get("/scans/{id}/results", async.GetResults)
+		r.Get("/scans/{id}/report", async.GetReport)
 	})
 
 	addr := ":" + getEnv("PORT", "8080")
@@ -88,7 +115,7 @@ func main() {
 		Addr:         addr,
 		Handler:      r,
 		ReadTimeout:  10 * time.Second,
-		WriteTimeout: 60 * time.Second, // /scans/quick can run up to 30s
+		WriteTimeout: 60 * time.Second,
 	}
 
 	go func() {
@@ -107,16 +134,28 @@ func main() {
 	}
 
 	slog.Info("shutting down")
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer shutdownCancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
-		slog.Error("shutdown error", "err", err)
+		slog.Error("http shutdown error", "err", err)
+	}
+	if err := pool.Shutdown(shutdownCtx); err != nil {
+		slog.Error("worker pool shutdown error", "err", err)
 	}
 }
 
 func getEnv(k, def string) string {
 	if v := os.Getenv(k); v != "" {
 		return v
+	}
+	return def
+}
+
+func envInt(k string, def int) int {
+	if v := os.Getenv(k); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
 	}
 	return def
 }
