@@ -46,9 +46,9 @@ type rdapResponse struct {
 	Events          []rdapEvent `json:"events"`
 	Status          []string    `json:"status"`
 	Entities        []struct {
-		Roles   []string        `json:"roles"`
-		Handle  string          `json:"handle"`
-		VCard   json.RawMessage `json:"vcardArray"`
+		Roles  []string        `json:"roles"`
+		Handle string          `json:"handle"`
+		VCard  json.RawMessage `json:"vcardArray"`
 	} `json:"entities"`
 }
 

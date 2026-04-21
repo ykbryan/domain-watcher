@@ -16,16 +16,16 @@ import (
 )
 
 const (
-	sourceName      = "openphish"
-	defaultFeedURL  = "https://openphish.com/feed.txt"
-	defaultFeedTTL  = 6 * time.Hour
+	sourceName       = "openphish"
+	defaultFeedURL   = "https://openphish.com/feed.txt"
+	defaultFeedTTL   = 6 * time.Hour
 	fetchHTTPTimeout = 15 * time.Second
 )
 
 type Source struct {
-	feedURL  string
-	ttl      time.Duration
-	client   *http.Client
+	feedURL string
+	ttl     time.Duration
+	client  *http.Client
 
 	mu        sync.RWMutex
 	hosts     map[string]struct{}

@@ -58,10 +58,10 @@ type sbClient struct {
 }
 
 type sbThreatIn struct {
-	ThreatTypes      []string   `json:"threatTypes"`
-	PlatformTypes    []string   `json:"platformTypes"`
-	ThreatEntryTypes []string   `json:"threatEntryTypes"`
-	ThreatEntries    []sbEntry  `json:"threatEntries"`
+	ThreatTypes      []string  `json:"threatTypes"`
+	PlatformTypes    []string  `json:"platformTypes"`
+	ThreatEntryTypes []string  `json:"threatEntryTypes"`
+	ThreatEntries    []sbEntry `json:"threatEntries"`
 }
 
 type sbEntry struct {

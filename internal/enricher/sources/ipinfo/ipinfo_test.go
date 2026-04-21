@@ -76,10 +76,10 @@ func TestIPInfo_UnresolvableDomain(t *testing.T) {
 
 func TestAsnOf(t *testing.T) {
 	cases := map[string]string{
-		"AS15169 Google LLC":    "AS15169",
-		"Hetzner Online GmbH":   "",
-		"":                      "",
-		"AS49870 Alsycon BV":    "AS49870",
+		"AS15169 Google LLC":  "AS15169",
+		"Hetzner Online GmbH": "",
+		"":                    "",
+		"AS49870 Alsycon BV":  "AS49870",
 	}
 	for in, want := range cases {
 		if got := asnOf(in); got != want {

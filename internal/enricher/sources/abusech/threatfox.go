@@ -36,13 +36,13 @@ func NewThreatFoxWithEndpoint(endpoint string) *ThreatFox {
 func (s *ThreatFox) Name() string { return threatfoxName }
 
 type threatfoxIOC struct {
-	IOC            string `json:"ioc"`
-	IOCType        string `json:"ioc_type"`
-	ThreatType     string `json:"threat_type"`
+	IOC              string `json:"ioc"`
+	IOCType          string `json:"ioc_type"`
+	ThreatType       string `json:"threat_type"`
 	MalwarePrintable string `json:"malware_printable"`
-	Confidence     int    `json:"confidence_level"`
-	FirstSeen      string `json:"first_seen"`
-	LastSeen       string `json:"last_seen"`
+	Confidence       int    `json:"confidence_level"`
+	FirstSeen        string `json:"first_seen"`
+	LastSeen         string `json:"last_seen"`
 }
 
 type threatfoxResponse struct {

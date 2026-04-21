@@ -23,34 +23,34 @@ func TestScore_CleanNoSignals(t *testing.T) {
 
 func TestScore_TableDriven(t *testing.T) {
 	cases := []struct {
-		name     string
-		in       Inputs
+		name      string
+		in        Inputs
 		wantScore int
-		wantBand Band
+		wantBand  Band
 	}{
 		{
-			name:     "one INFO -> CLEAN",
-			in:       Inputs{Findings: []enricher.Finding{f(sig("info", enricher.SeverityInfo))}},
+			name:      "one INFO -> CLEAN",
+			in:        Inputs{Findings: []enricher.Finding{f(sig("info", enricher.SeverityInfo))}},
 			wantScore: 1,
-			wantBand: BandClean,
+			wantBand:  BandClean,
 		},
 		{
-			name:     "one MEDIUM -> CLEAN (5 ≤ 10)",
-			in:       Inputs{Findings: []enricher.Finding{f(sig("m", enricher.SeverityMedium))}},
+			name:      "one MEDIUM -> CLEAN (5 ≤ 10)",
+			in:        Inputs{Findings: []enricher.Finding{f(sig("m", enricher.SeverityMedium))}},
 			wantScore: 5,
-			wantBand: BandClean,
+			wantBand:  BandClean,
 		},
 		{
-			name:     "one HIGH -> LOW (15 in 11-25)",
-			in:       Inputs{Findings: []enricher.Finding{f(sig("h", enricher.SeverityHigh))}},
+			name:      "one HIGH -> LOW (15 in 11-25)",
+			in:        Inputs{Findings: []enricher.Finding{f(sig("h", enricher.SeverityHigh))}},
 			wantScore: 15,
-			wantBand: BandLow,
+			wantBand:  BandLow,
 		},
 		{
-			name:     "one CRITICAL -> MEDIUM (40)",
-			in:       Inputs{Findings: []enricher.Finding{f(sig("c", enricher.SeverityCritical))}},
+			name:      "one CRITICAL -> MEDIUM (40)",
+			in:        Inputs{Findings: []enricher.Finding{f(sig("c", enricher.SeverityCritical))}},
 			wantScore: 40,
-			wantBand: BandMedium,
+			wantBand:  BandMedium,
 		},
 		{
 			name: "two CRITICAL -> 80 CRITICAL",
@@ -58,7 +58,7 @@ func TestScore_TableDriven(t *testing.T) {
 				f(sig("c1", enricher.SeverityCritical), sig("c2", enricher.SeverityCritical)),
 			}},
 			wantScore: 80,
-			wantBand: BandCritical,
+			wantBand:  BandCritical,
 		},
 		{
 			name: "HIGH + MX multiplier -> 15*1.5=22.5 -> 23 LOW (still ≤25)",
@@ -67,7 +67,7 @@ func TestScore_TableDriven(t *testing.T) {
 				HasMX:    true,
 			},
 			wantScore: 23,
-			wantBand: BandLow,
+			wantBand:  BandLow,
 		},
 		{
 			name: "CRITICAL + MX multiplier -> 60 HIGH",
@@ -76,7 +76,7 @@ func TestScore_TableDriven(t *testing.T) {
 				HasMX:    true,
 			},
 			wantScore: 60,
-			wantBand: BandHigh,
+			wantBand:  BandHigh,
 		},
 		{
 			name: "fresh cert <24h + live + MX stacks multipliers",
@@ -87,7 +87,7 @@ func TestScore_TableDriven(t *testing.T) {
 				IsLive:   true,
 			},
 			wantScore: 78,
-			wantBand: BandCritical,
+			wantBand:  BandCritical,
 		},
 		{
 			name: "fresh cert <24h but NOT live -> multiplier does not apply",
@@ -96,7 +96,7 @@ func TestScore_TableDriven(t *testing.T) {
 				IsLive:   false,
 			},
 			wantScore: 40,
-			wantBand: BandMedium,
+			wantBand:  BandMedium,
 		},
 		{
 			name: "sum capped at 100",
@@ -107,7 +107,7 @@ func TestScore_TableDriven(t *testing.T) {
 				sig("c4", enricher.SeverityCritical),
 			)}},
 			wantScore: 100,
-			wantBand: BandCritical,
+			wantBand:  BandCritical,
 		},
 		{
 			name: "VT malicious + URLhaus online stacks multiplier (S6 signal labels)",
@@ -117,7 +117,7 @@ func TestScore_TableDriven(t *testing.T) {
 				sig("urlhaus_online", enricher.SeverityCritical),
 			)}},
 			wantScore: 100,
-			wantBand: BandCritical,
+			wantBand:  BandCritical,
 		},
 	}
 

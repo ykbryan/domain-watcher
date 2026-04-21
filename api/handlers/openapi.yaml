@@ -1,0 +1,313 @@
+openapi: 3.0.3
+info:
+  title: domainwatch API
+  version: "0.1.0"
+  description: |
+    Domain risk intelligence for SMBs. Given a domain, domainwatch generates
+    typosquat permutations, filters to live ones via DNS, enriches with
+    multiple threat-intel sources, and returns a 0–100 risk score per
+    permutation plus an aggregate.
+
+servers:
+  - url: http://localhost:8080
+    description: Local docker-compose
+paths:
+  /healthz:
+    get:
+      summary: Service liveness + DB ping
+      responses:
+        "200":
+          description: healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: ok }
+                  db: { type: string, example: ok }
+                  version: { type: string, example: "0.1.0" }
+        "503":
+          description: degraded (DB unreachable)
+
+  /api/v1/scans/quick:
+    post:
+      summary: Synchronous quick scan (demo-friendly, ~30s budget)
+      description: |
+        Runs the full pipeline against the target domain within a short budget.
+        Enriches only the top-N live domains (default 20). Response includes
+        aggregate risk score + band, per-domain scores, and a findings-by-severity
+        summary. Uses the shared pipeline; see POST /api/v1/scans for a full async
+        scan with higher permutation caps.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [domain]
+              properties:
+                domain: { type: string, example: example.com }
+      responses:
+        "200":
+          description: Scan complete
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuickScanResult"
+        "400": { description: Invalid request }
+        "500": { description: Scan failed }
+        "504": { description: Scan exceeded QuickTimeout }
+
+  /api/v1/scans:
+    post:
+      summary: Enqueue an asynchronous scan
+      description: Returns immediately with a scan_id. Poll GET /api/v1/scans/{id} for status.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [domain]
+              properties:
+                domain: { type: string }
+                options:
+                  type: object
+                  properties:
+                    max_permutations: { type: integer }
+      responses:
+        "202":
+          description: Scan queued
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  scan_id: { type: string, format: uuid }
+                  status: { type: string, enum: [queued] }
+        "400": { description: Invalid request }
+        "503": { description: Queue full }
+
+  /api/v1/scans/{id}:
+    get:
+      summary: Get scan status + progress
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: Scan status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScanStatus"
+        "404": { description: Scan not found }
+
+  /api/v1/scans/{id}/results:
+    get:
+      summary: Paginated permutation results, ordered by risk_score DESC
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: risk_band, in: query, schema: { type: string, example: "HIGH,CRITICAL" } }
+        - { name: limit, in: query, schema: { type: integer, default: 50, maximum: 200 } }
+        - { name: offset, in: query, schema: { type: integer, default: 0 } }
+      responses:
+        "200":
+          description: Permutation rows
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  scan_id: { type: string, format: uuid }
+                  total: { type: integer }
+                  limit: { type: integer }
+                  offset: { type: integer }
+                  results:
+                    type: array
+                    items: { $ref: "#/components/schemas/PermutationResult" }
+
+  /api/v1/scans/{id}/report:
+    get:
+      summary: Aggregate scan report with top domains and band distribution
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: Report
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScanReport"
+
+  /api/v1/monitors:
+    post:
+      summary: Create a monitored domain
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [domain]
+              properties:
+                domain: { type: string }
+                owner_email: { type: string }
+                check_interval_hours: { type: integer, default: 24 }
+                check_interval_minutes: { type: integer, description: "Overrides hours when > 0" }
+                alert_channels:
+                  type: object
+                  properties:
+                    lark_webhook: { type: string }
+                    telegram_chat_id: { type: string }
+                    email: { type: boolean }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Monitor" }
+    get:
+      summary: List monitors
+      responses:
+        "200":
+          description: Monitors
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  monitors:
+                    type: array
+                    items: { $ref: "#/components/schemas/Monitor" }
+
+  /api/v1/monitors/{id}:
+    delete:
+      summary: Delete a monitor (cascades to alerts)
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "204": { description: Deleted }
+
+  /api/v1/monitors/{id}/alerts:
+    get:
+      summary: List alerts for a monitor, newest first
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: Alerts
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  alerts:
+                    type: array
+                    items: { $ref: "#/components/schemas/Alert" }
+
+components:
+  schemas:
+    PermutationResult:
+      type: object
+      properties:
+        domain: { type: string }
+        a: { type: array, items: { type: string } }
+        mx: { type: array, items: { type: string } }
+        ns: { type: array, items: { type: string } }
+        is_live: { type: boolean }
+        risk_score: { type: integer, nullable: true }
+        risk_band: { type: string, nullable: true, enum: [CLEAN, LOW, MEDIUM, HIGH, CRITICAL] }
+
+    LiveDomainScored:
+      type: object
+      properties:
+        domain: { type: string }
+        a: { type: array, items: { type: string } }
+        mx: { type: array, items: { type: string } }
+        ns: { type: array, items: { type: string } }
+        risk_score: { type: integer }
+        risk_band: { type: string }
+        risk_signals:
+          type: array
+          items: { $ref: "#/components/schemas/RiskSignal" }
+
+    RiskSignal:
+      type: object
+      properties:
+        label: { type: string }
+        severity: { type: string, enum: [info, low, medium, high, critical] }
+        detail: { type: string }
+
+    QuickScanResult:
+      type: object
+      properties:
+        scan_id: { type: string, format: uuid }
+        target_domain: { type: string }
+        elapsed_ms: { type: integer }
+        permutation_count: { type: integer }
+        live_count: { type: integer }
+        enriched_count: { type: integer }
+        aggregate_score: { type: integer }
+        aggregate_band: { type: string }
+        findings_by_severity:
+          type: object
+          additionalProperties: { type: integer }
+        top_live_domains:
+          type: array
+          items: { $ref: "#/components/schemas/LiveDomainScored" }
+
+    ScanStatus:
+      type: object
+      properties:
+        scan_id: { type: string, format: uuid }
+        target_domain: { type: string }
+        status: { type: string, enum: [queued, running, completed, failed] }
+        triggered_by: { type: string, enum: [api, monitor, cli] }
+        created_at: { type: string, format: date-time }
+        completed_at: { type: string, format: date-time, nullable: true }
+        error: { type: string, nullable: true }
+        permutation_count: { type: integer }
+        live_count: { type: integer }
+        band_counts:
+          type: object
+          additionalProperties: { type: integer }
+
+    ScanReport:
+      type: object
+      properties:
+        scan_id: { type: string, format: uuid }
+        target_domain: { type: string }
+        status: { type: string }
+        permutation_count: { type: integer }
+        live_count: { type: integer }
+        band_counts:
+          type: object
+          additionalProperties: { type: integer }
+        findings_by_severity:
+          type: object
+          additionalProperties: { type: integer }
+        top_domains:
+          type: array
+          items: { $ref: "#/components/schemas/PermutationResult" }
+
+    Monitor:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        domain: { type: string }
+        owner_email: { type: string, nullable: true }
+        check_interval_minutes: { type: integer }
+        alert_channels: { type: object }
+        last_checked_at: { type: string, format: date-time, nullable: true }
+        created_at: { type: string, format: date-time }
+
+    Alert:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        permutation_domain: { type: string }
+        risk_score: { type: integer }
+        risk_band: { type: string }
+        findings_summary: { type: object }
+        created_at: { type: string, format: date-time }
+        sent_at: { type: string, format: date-time, nullable: true }

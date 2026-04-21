@@ -152,8 +152,10 @@ func main() {
 	r := chi.NewRouter()
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.RequestID)
+	r.Use(exposeRequestID) // mirror chi's X-Request-Id into response
 	r.Use(middleware.Logger)
 	r.Get("/healthz", handlers.Health(dbpool, version))
+	r.Get("/api/v1/openapi.yaml", handlers.ServeOpenAPI())
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Post("/scans/quick", scans.PostQuick)
 		r.Post("/scans", async.Post)
@@ -252,6 +254,17 @@ func isNilSource(s enricher.Source) bool {
 		return v == nil
 	}
 	return false
+}
+
+// exposeRequestID copies chi's request-id into the response headers so
+// clients can correlate their request to server-side logs.
+func exposeRequestID(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if id := middleware.GetReqID(r.Context()); id != "" {
+			w.Header().Set("X-Request-Id", id)
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func parseUpstreams(csv string) []string {

@@ -17,8 +17,8 @@ type fakeChannel struct {
 	calls   atomic.Int32
 }
 
-func (f *fakeChannel) Name() string            { return f.name }
-func (f *fakeChannel) Enabled(Target) bool     { return f.enabled }
+func (f *fakeChannel) Name() string        { return f.name }
+func (f *fakeChannel) Enabled(Target) bool { return f.enabled }
 func (f *fakeChannel) Send(context.Context, Batch, Target) error {
 	f.calls.Add(1)
 	return f.err

@@ -37,10 +37,10 @@ type Config struct {
 
 // Pool is a fixed-size worker pool that runs pipeline.Run per job.
 type Pool struct {
-	cfg       Config
-	jobs      JobStore
-	perms     pipeline.PermStore
-	findings  pipeline.FindingStore
+	cfg          Config
+	jobs         JobStore
+	perms        pipeline.PermStore
+	findings     pipeline.FindingStore
 	pipelineOpts pipeline.Options
 
 	queue chan uuid.UUID

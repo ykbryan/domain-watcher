@@ -26,14 +26,14 @@ type ScanStore interface {
 
 // ScansConfig tunes quick-scan behavior. Defaults apply when zero.
 type ScansConfig struct {
-	QuickMaxPerms    int           // cap on permutations for /scans/quick (default 1000)
-	QuickTimeout     time.Duration // total budget for /scans/quick (default 30s)
-	QuickEnrichTopN  int           // enrich top-N live in /scans/quick (default 20)
-	TopInResponse    int           // rows in response.top_live_domains (default 20)
-	Resolver         resolver.Config
-	EnricherSources  []enricher.Source
-	EnricherWorkers  int
-	EnricherTimeout  time.Duration
+	QuickMaxPerms   int           // cap on permutations for /scans/quick (default 1000)
+	QuickTimeout    time.Duration // total budget for /scans/quick (default 30s)
+	QuickEnrichTopN int           // enrich top-N live in /scans/quick (default 20)
+	TopInResponse   int           // rows in response.top_live_domains (default 20)
+	Resolver        resolver.Config
+	EnricherSources []enricher.Source
+	EnricherWorkers int
+	EnricherTimeout time.Duration
 }
 
 type Scans struct {

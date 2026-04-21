@@ -50,18 +50,18 @@ func NewWithEndpoint(endpoint, apiKey string, limiter ratelimit.Limiter) *Source
 func (s *Source) Name() string { return sourceName }
 
 type vtStats struct {
-	Malicious   int `json:"malicious"`
-	Suspicious  int `json:"suspicious"`
-	Undetected  int `json:"undetected"`
-	Harmless    int `json:"harmless"`
-	Timeout     int `json:"timeout"`
+	Malicious  int `json:"malicious"`
+	Suspicious int `json:"suspicious"`
+	Undetected int `json:"undetected"`
+	Harmless   int `json:"harmless"`
+	Timeout    int `json:"timeout"`
 }
 
 type vtAttributes struct {
-	LastAnalysisStats vtStats             `json:"last_analysis_stats"`
-	LastAnalysisDate  int64               `json:"last_analysis_date"`
-	Reputation        int                 `json:"reputation"`
-	Categories        map[string]string   `json:"categories"`
+	LastAnalysisStats vtStats           `json:"last_analysis_stats"`
+	LastAnalysisDate  int64             `json:"last_analysis_date"`
+	Reputation        int               `json:"reputation"`
+	Categories        map[string]string `json:"categories"`
 }
 
 type vtResponse struct {

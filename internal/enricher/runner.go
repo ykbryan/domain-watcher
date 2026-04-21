@@ -64,12 +64,15 @@ func (r *Runner) FanOut(ctx context.Context, domains []string) [][]Finding {
 func (r *Runner) runOne(ctx context.Context, src Source, domain string) *Finding {
 	started := time.Now()
 	f, err := src.Enrich(ctx, domain)
+	elapsedMs := time.Since(started).Milliseconds()
 	if err != nil {
 		if f == nil {
 			f = &Finding{}
 		}
 		f.Error = err.Error()
-		slog.Warn("enrichment error", "source", src.Name(), "domain", domain, "err", err)
+		slog.Warn("enrichment error", "source", src.Name(), "domain", domain, "duration_ms", elapsedMs, "err", err)
+	} else {
+		slog.Debug("enrichment ok", "source", src.Name(), "domain", domain, "duration_ms", elapsedMs, "signals", len(f.RiskSignals))
 	}
 	if f == nil {
 		f = &Finding{}

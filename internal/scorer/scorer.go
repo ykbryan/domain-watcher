@@ -25,9 +25,9 @@ const (
 	weightMedium   = 5
 	weightInfo     = 1
 
-	multMXPresent          = 1.5 // MX record → can receive email → BEC risk
-	multFreshCertAndLive   = 1.3 // cert issued <24h AND DNS live → brand new attack
-	multVTMalAndURLhausOn  = 1.5 // VT malicious>0 AND URLhaus online (S6 adds VT)
+	multMXPresent         = 1.5 // MX record → can receive email → BEC risk
+	multFreshCertAndLive  = 1.3 // cert issued <24h AND DNS live → brand new attack
+	multVTMalAndURLhausOn = 1.5 // VT malicious>0 AND URLhaus online (S6 adds VT)
 )
 
 // Inputs captures the non-signal context a domain's scoring depends on.

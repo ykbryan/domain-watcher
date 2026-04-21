@@ -15,11 +15,11 @@ import (
 
 // fakeMonitorStore tracks every lifecycle transition for assertions.
 type fakeMonitorStore struct {
-	mu            sync.Mutex
-	dueForScan    []store.MonitoredDomain
-	dueForDiff    []store.MonitoredDomain
-	scanning      map[uuid.UUID]uuid.UUID // monitor id → scan id
-	promoted      []uuid.UUID
+	mu         sync.Mutex
+	dueForScan []store.MonitoredDomain
+	dueForDiff []store.MonitoredDomain
+	scanning   map[uuid.UUID]uuid.UUID // monitor id → scan id
+	promoted   []uuid.UUID
 }
 
 func newFakeMonitorStore() *fakeMonitorStore {

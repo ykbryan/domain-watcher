@@ -11,14 +11,14 @@ import (
 )
 
 type Alert struct {
-	ID                  uuid.UUID
-	MonitoredDomainID   uuid.UUID
-	PermutationDomain   string
-	RiskScore           int
-	RiskBand            string
-	FindingsSummary     json.RawMessage
-	AlertCreatedAt      time.Time
-	AlertSentAt         *time.Time
+	ID                uuid.UUID
+	MonitoredDomainID uuid.UUID
+	PermutationDomain string
+	RiskScore         int
+	RiskBand          string
+	FindingsSummary   json.RawMessage
+	AlertCreatedAt    time.Time
+	AlertSentAt       *time.Time
 }
 
 type AlertRow struct {

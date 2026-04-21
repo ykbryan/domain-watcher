@@ -72,8 +72,8 @@ func (f *fakeScanStore) UpdateScores(_ context.Context, _ []store.ScoreUpdate) e
 // fakeFindingStore implements FindingStore. Kept separate because both stores
 // carry a method named BulkInsert with different signatures.
 type fakeFindingStore struct {
-	mu      sync.Mutex
-	parent  *fakeScanStore
+	mu     sync.Mutex
+	parent *fakeScanStore
 }
 
 func (f *fakeFindingStore) BulkInsert(_ context.Context, rows []store.FindingRow) error {

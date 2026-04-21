@@ -11,8 +11,8 @@ import (
 )
 
 const (
-	telegramMaxItems = 10
-	telegramTimeout  = 8 * time.Second
+	telegramMaxItems       = 10
+	telegramTimeout        = 8 * time.Second
 	telegramDefaultAPIBase = "https://api.telegram.org"
 )
 
