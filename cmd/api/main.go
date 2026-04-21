@@ -10,11 +10,14 @@ import (
 	"syscall"
 	"time"
 
+	"strings"
+
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/joho/godotenv"
 
 	"github.com/ykbryan/domain-watcher/api/handlers"
+	"github.com/ykbryan/domain-watcher/internal/resolver"
 	"github.com/ykbryan/domain-watcher/internal/store"
 )
 
@@ -31,6 +34,12 @@ func main() {
 		os.Exit(1)
 	}
 
+	if err := store.Migrate(dbURL); err != nil {
+		slog.Error("migrations failed", "err", err)
+		os.Exit(1)
+	}
+	slog.Info("migrations applied")
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -41,16 +50,29 @@ func main() {
 	}
 	defer pool.Close()
 
+	scans := handlers.NewScans(
+		store.NewScanJobs(pool),
+		store.NewPermutations(pool),
+		handlers.ScansConfig{
+			Resolver: resolver.Config{Upstreams: parseUpstreams(os.Getenv("DNS_UPSTREAMS"))},
+		},
+	)
+
 	r := chi.NewRouter()
 	r.Use(middleware.Recoverer)
+	r.Use(middleware.RequestID)
+	r.Use(middleware.Logger)
 	r.Get("/healthz", handlers.Health(pool, version))
+	r.Route("/api/v1", func(r chi.Router) {
+		r.Post("/scans/quick", scans.PostQuick)
+	})
 
 	addr := ":" + getEnv("PORT", "8080")
 	srv := &http.Server{
 		Addr:         addr,
 		Handler:      r,
 		ReadTimeout:  10 * time.Second,
-		WriteTimeout: 10 * time.Second,
+		WriteTimeout: 60 * time.Second, // /scans/quick can run up to 30s
 	}
 
 	go func() {
@@ -81,4 +103,22 @@ func getEnv(k, def string) string {
 		return v
 	}
 	return def
+}
+
+func parseUpstreams(csv string) []string {
+	csv = strings.TrimSpace(csv)
+	if csv == "" {
+		return nil
+	}
+	parts := strings.Split(csv, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p = strings.TrimSpace(p); p != "" {
+			if !strings.Contains(p, ":") {
+				p += ":53"
+			}
+			out = append(out, p)
+		}
+	}
+	return out
 }

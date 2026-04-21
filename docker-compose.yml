@@ -23,6 +23,10 @@ services:
     environment:
       DATABASE_URL: postgres://domainwatch:domainwatch@postgres:5432/domainwatch?sslmode=disable
       PORT: "8080"
+      # Docker Desktop blocks direct UDP/53 egress; use the embedded DNS
+      # resolver at 127.0.0.11 which forwards to host resolvers.
+      # In prod (Coolify/Supabase), unset or use public resolvers directly.
+      DNS_UPSTREAMS: "127.0.0.11:53"
     ports:
       - "8080:8080"
 
