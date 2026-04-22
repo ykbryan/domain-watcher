@@ -6,13 +6,15 @@ Given a domain, domainwatch generates typosquat/lookalike permutations, filters 
 
 ## Quick start
 
-Zero-config local stack:
+domainwatch uses Supabase as its database in every environment — there is no bundled local Postgres. To run it locally you need tailnet access to your Supabase instance and a `DATABASE_URL` configured.
 
 ```bash
-docker compose up --build
+cp .env.example .env
+# edit .env and paste in your Supabase connection string + any API keys
+make up
 ```
 
-Wait for the `api` container to log `api listening`, then:
+Wait for the `domainwatch` container to log `api listening`, then:
 
 ```bash
 curl -X POST http://localhost:8080/api/v1/scans/quick \

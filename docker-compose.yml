@@ -1,34 +1,17 @@
+# Single compose file for every environment.
+# Database is always Supabase (managed Postgres) — the DATABASE_URL
+# env var is set by Coolify in prod or by a local .env file in dev.
+# There is no local postgres container; tailnet access to Supabase
+# is required to run the stack anywhere.
 services:
-  postgres:
-    image: postgres:16-alpine
-    environment:
-      POSTGRES_USER: domainwatch
-      POSTGRES_PASSWORD: domainwatch
-      POSTGRES_DB: domainwatch
-    ports:
-      - "5432:5432"
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U domainwatch"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-
-  api:
+  domainwatch:
     build: .
-    depends_on:
-      postgres:
-        condition: service_healthy
-    environment:
-      DATABASE_URL: postgres://domainwatch:domainwatch@postgres:5432/domainwatch?sslmode=disable
-      PORT: "8080"
-      # Docker Desktop blocks direct UDP/53 egress; use the embedded DNS
-      # resolver at 127.0.0.11 which forwards to host resolvers.
-      # In prod (Coolify/Supabase), unset or use public resolvers directly.
-      DNS_UPSTREAMS: "127.0.0.11:53"
     ports:
       - "8080:8080"
-
-volumes:
-  pgdata:
+    restart: unless-stopped
+    # env_file reads .env from the repo root for local dev.
+    # On Coolify, variables set in the Environment Variables panel
+    # take precedence and this file is irrelevant.
+    env_file:
+      - path: ./.env
+        required: false
