@@ -6,13 +6,12 @@
 services:
   domainwatch:
     build: .
-    # Expose (not publish): the container listens on 8080 internally, but
-    # the host-side port is assigned by the orchestrator. Coolify's
-    # Traefik proxies external traffic to this service; locally, Docker
-    # Compose routes other services in the same network to it by name.
-    # Publishing 8080:8080 explicitly clashes with Coolify's host-port.
-    expose:
-      - "8080"
+    # Host-port 18081 is what Coolify's proxy already routes to for this
+    # app. Publishing 8080:8080 clashes with the Coolify host's own port
+    # 8080. If a developer has 18081 taken locally, override with:
+    #   HOST_PORT=19081 docker compose up --build
+    ports:
+      - "${HOST_PORT:-18081}:8080"
     restart: unless-stopped
     # env_file reads .env from the repo root for local dev.
     # On Coolify, variables set in the Environment Variables panel
