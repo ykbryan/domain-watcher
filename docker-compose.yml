@@ -6,8 +6,13 @@
 services:
   domainwatch:
     build: .
-    ports:
-      - "8080:8080"
+    # Expose (not publish): the container listens on 8080 internally, but
+    # the host-side port is assigned by the orchestrator. Coolify's
+    # Traefik proxies external traffic to this service; locally, Docker
+    # Compose routes other services in the same network to it by name.
+    # Publishing 8080:8080 explicitly clashes with Coolify's host-port.
+    expose:
+      - "8080"
     restart: unless-stopped
     # env_file reads .env from the repo root for local dev.
     # On Coolify, variables set in the Environment Variables panel
