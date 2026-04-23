@@ -30,6 +30,8 @@ func NewSpecRegistry() Registry {
 		"ipinfo":       rate.NewLimiter(rate.Every(50*time.Millisecond), 10), // 50K/mo
 		"abuseipdb":    rate.NewLimiter(rate.Every(time.Second), 1),          // 1K/day via ~60/min cap
 		"urlscan":      rate.NewLimiter(rate.Every(2*time.Second), 1),        // 100/day search-only
+		"pdns":         rate.NewLimiter(rate.Every(time.Second), 1),          // CIRCL PDNS, polite default
+		"censys":       rate.NewLimiter(rate.Every(30*time.Second), 1),       // free tier is 250/mo
 	}
 }
 

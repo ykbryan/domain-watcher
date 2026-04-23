@@ -22,10 +22,13 @@ import (
 	"github.com/ykbryan/domain-watcher/internal/metrics"
 	"github.com/ykbryan/domain-watcher/internal/enricher/sources/abusech"
 	"github.com/ykbryan/domain-watcher/internal/enricher/sources/abuseipdb"
+	"github.com/ykbryan/domain-watcher/internal/enricher/sources/censys"
 	"github.com/ykbryan/domain-watcher/internal/enricher/sources/certwatch"
+	"github.com/ykbryan/domain-watcher/internal/enricher/sources/dnsposture"
 	"github.com/ykbryan/domain-watcher/internal/enricher/sources/ipinfo"
 	"github.com/ykbryan/domain-watcher/internal/enricher/sources/openphish"
 	"github.com/ykbryan/domain-watcher/internal/enricher/sources/otx"
+	"github.com/ykbryan/domain-watcher/internal/enricher/sources/pdns"
 	"github.com/ykbryan/domain-watcher/internal/enricher/sources/rdap"
 	"github.com/ykbryan/domain-watcher/internal/enricher/sources/safebrowsing"
 	"github.com/ykbryan/domain-watcher/internal/enricher/sources/urlscan"
@@ -78,6 +81,7 @@ func main() {
 		abusech.NewThreatFox(abusechKey),
 		openphish.New(),
 		urlscan.New(os.Getenv("URLSCAN_API_KEY"), rl.Get("urlscan")), // search works without a key
+		dnsposture.New(),
 	}
 	sources = appendIfNotNil(sources,
 		virustotal.New(os.Getenv("VIRUSTOTAL_API_KEY"), rl.Get("virustotal")),
@@ -85,6 +89,8 @@ func main() {
 		otx.New(os.Getenv("OTX_API_KEY"), rl.Get("otx")),
 		ipinfo.New(os.Getenv("IPINFO_TOKEN"), rl.Get("ipinfo")),
 		abuseipdb.New(os.Getenv("ABUSEIPDB_API_KEY"), rl.Get("abuseipdb")),
+		pdns.New(os.Getenv("CIRCL_PDNS_USERNAME"), os.Getenv("CIRCL_PDNS_PASSWORD"), rl.Get("pdns")),
+		censys.New(os.Getenv("CENSYS_API_ID"), os.Getenv("CENSYS_API_SECRET"), rl.Get("censys")),
 	)
 	slog.Info("enrichers registered", "count", len(sources))
 	for _, s := range sources {
@@ -271,6 +277,10 @@ func isNilSource(s enricher.Source) bool {
 		return v == nil
 	case *urlscan.Source:
 		return v == nil
+	case *pdns.Source:
+		return v == nil
+	case *censys.Source:
+		return v == nil
 	}
 	return false
 }
@@ -312,6 +322,12 @@ func providerDisplayName(slug string) string {
 		return "OpenPhish"
 	case "rdap":
 		return "RDAP (Registration Data)"
+	case "pdns":
+		return "CIRCL Passive DNS"
+	case "dnsposture":
+		return "DNS Posture"
+	case "censys":
+		return "Censys"
 	}
 	return slug
 }
@@ -324,7 +340,7 @@ func providerCategory(slug string) string {
 		return "Reputation"
 	case "urlhaus", "threatfox", "otx":
 		return "Threat Intelligence"
-	case "ipinfo", "abuseipdb", "certwatch":
+	case "ipinfo", "abuseipdb", "certwatch", "pdns", "dnsposture", "censys":
 		return "Infrastructure"
 	case "urlscan", "openphish":
 		return "Phishing"
@@ -339,7 +355,7 @@ func providerCategory(slug string) string {
 // relevant environment variable is non-empty.
 func providerKeyConfigured(slug, abusechKey string) bool {
 	switch slug {
-	case "rdap", "certwatch", "openphish":
+	case "rdap", "certwatch", "openphish", "dnsposture":
 		return true // no key required
 	case "urlhaus", "threatfox":
 		return abusechKey != ""
@@ -355,6 +371,10 @@ func providerKeyConfigured(slug, abusechKey string) bool {
 		return os.Getenv("IPINFO_TOKEN") != ""
 	case "abuseipdb":
 		return os.Getenv("ABUSEIPDB_API_KEY") != ""
+	case "pdns":
+		return os.Getenv("CIRCL_PDNS_USERNAME") != "" && os.Getenv("CIRCL_PDNS_PASSWORD") != ""
+	case "censys":
+		return os.Getenv("CENSYS_API_ID") != "" && os.Getenv("CENSYS_API_SECRET") != ""
 	}
 	return false
 }
