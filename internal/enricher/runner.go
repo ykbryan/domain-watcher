@@ -7,6 +7,11 @@ import (
 	"time"
 )
 
+// Metrics is an optional process-wide sink for enrichment telemetry.
+// Set it once at startup (e.g. main.go attaching an *internal/metrics
+// registry). If nil, Runner.runOne skips the call — there is no default.
+var Metrics MetricsRecorder
+
 // Runner fans sources out across a worker pool. Every (domain, source) pair
 // produces exactly one Finding — errors become Finding.Error rather than
 // aborting the batch.
@@ -65,6 +70,9 @@ func (r *Runner) runOne(ctx context.Context, src Source, domain string) *Finding
 	started := time.Now()
 	f, err := src.Enrich(ctx, domain)
 	elapsedMs := time.Since(started).Milliseconds()
+	if Metrics != nil {
+		Metrics.Record(src.Name(), elapsedMs, err)
+	}
 	if err != nil {
 		if f == nil {
 			f = &Finding{}

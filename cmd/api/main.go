@@ -19,6 +19,7 @@ import (
 	"github.com/ykbryan/domain-watcher/api/handlers"
 	"github.com/ykbryan/domain-watcher/internal/alert"
 	"github.com/ykbryan/domain-watcher/internal/enricher"
+	"github.com/ykbryan/domain-watcher/internal/metrics"
 	"github.com/ykbryan/domain-watcher/internal/enricher/sources/abusech"
 	"github.com/ykbryan/domain-watcher/internal/enricher/sources/abuseipdb"
 	"github.com/ykbryan/domain-watcher/internal/enricher/sources/certwatch"
@@ -88,6 +89,23 @@ func main() {
 	slog.Info("enrichers registered", "count", len(sources))
 	for _, s := range sources {
 		slog.Info("enricher", "name", s.Name())
+	}
+
+	// Provider telemetry for the public /api/v1/providers endpoint.
+	// Counters are in-memory and reset on process restart; the
+	// categories below mirror lib/methodology.ts in the UI so the
+	// operational page groups providers consistently.
+	providerMetrics := metrics.NewRegistry()
+	enricher.Metrics = providerMetrics
+	providerStartedAt := time.Now()
+	for _, s := range sources {
+		name := s.Name()
+		providerMetrics.Register(metrics.Info{
+			ID:            providerID(name),
+			Name:          name,
+			Category:      providerCategory(name),
+			KeyConfigured: providerKeyConfigured(name, abusechKey),
+		})
 	}
 
 	resolverCfg := resolver.Config{Upstreams: parseUpstreams(os.Getenv("DNS_UPSTREAMS"))}
@@ -162,6 +180,7 @@ func main() {
 		r.Get("/scans/{id}", async.Get)
 		r.Get("/scans/{id}/results", async.GetResults)
 		r.Get("/scans/{id}/report", async.GetReport)
+		r.Get("/providers", handlers.Providers(providerMetrics, providerStartedAt))
 		r.Post("/monitors", monitors.Post)
 		r.Get("/monitors", monitors.List)
 		r.Delete("/monitors/{id}", monitors.Delete)
@@ -265,6 +284,80 @@ func exposeRequestID(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// providerID returns a stable slug matching lib/methodology.ts on the UI.
+func providerID(name string) string {
+	switch name {
+	case "VirusTotal":
+		return "virustotal"
+	case "Google Safe Browsing":
+		return "safebrowsing"
+	case "abuse.ch URLhaus":
+		return "urlhaus"
+	case "abuse.ch ThreatFox":
+		return "threatfox"
+	case "AlienVault OTX":
+		return "otx"
+	case "IPInfo":
+		return "ipinfo"
+	case "AbuseIPDB":
+		return "abuseipdb"
+	case "urlscan.io":
+		return "urlscan"
+	case "crt.sh Certificate Transparency":
+		return "certwatch"
+	case "OpenPhish":
+		return "openphish"
+	case "RDAP (Registration Data)":
+		return "rdap"
+	}
+	return strings.ToLower(strings.ReplaceAll(name, " ", "-"))
+}
+
+// providerCategory returns the five-category taxonomy published in the
+// methodology. Any unknown source gets "Reference".
+func providerCategory(name string) string {
+	switch name {
+	case "VirusTotal", "Google Safe Browsing":
+		return "Reputation"
+	case "abuse.ch URLhaus", "abuse.ch ThreatFox", "AlienVault OTX":
+		return "Threat Intelligence"
+	case "IPInfo", "AbuseIPDB", "crt.sh Certificate Transparency":
+		return "Infrastructure"
+	case "urlscan.io", "OpenPhish":
+		return "Phishing"
+	case "RDAP (Registration Data)":
+		return "Registration"
+	}
+	return "Reference"
+}
+
+// providerKeyConfigured mirrors the env-driven construction logic
+// above: sources that require a key are only "configured" when the
+// relevant environment variable is non-empty.
+func providerKeyConfigured(name, abusechKey string) bool {
+	switch name {
+	case "RDAP (Registration Data)",
+		"crt.sh Certificate Transparency",
+		"OpenPhish":
+		return true // no key needed
+	case "abuse.ch URLhaus", "abuse.ch ThreatFox":
+		return abusechKey != ""
+	case "urlscan.io":
+		return os.Getenv("URLSCAN_API_KEY") != "" // search works unauth too
+	case "VirusTotal":
+		return os.Getenv("VIRUSTOTAL_API_KEY") != ""
+	case "Google Safe Browsing":
+		return os.Getenv("GOOGLE_SAFE_BROWSING_KEY") != ""
+	case "AlienVault OTX":
+		return os.Getenv("OTX_API_KEY") != ""
+	case "IPInfo":
+		return os.Getenv("IPINFO_TOKEN") != ""
+	case "AbuseIPDB":
+		return os.Getenv("ABUSEIPDB_API_KEY") != ""
+	}
+	return false
 }
 
 func parseUpstreams(csv string) []string {

@@ -139,6 +139,30 @@ paths:
               schema:
                 $ref: "#/components/schemas/ScanReport"
 
+  /api/v1/providers:
+    get:
+      summary: Per-provider enrichment telemetry (in-memory, resets on restart)
+      description: |
+        Returns one row per registered enrichment provider with its
+        category, whether the required API key is configured, and
+        cumulative counters since the process started. Intended for a
+        public operational-transparency page; not for billing.
+      responses:
+        "200":
+          description: Provider snapshot
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  counters_since:
+                    type: string
+                    format: date-time
+                    description: UTC timestamp the in-memory counters started from.
+                  providers:
+                    type: array
+                    items: { $ref: "#/components/schemas/Provider" }
+
   /api/v1/monitors:
     post:
       summary: Create a monitored domain
@@ -207,6 +231,22 @@ paths:
 
 components:
   schemas:
+    Provider:
+      type: object
+      properties:
+        id: { type: string, description: "slug id, stable identifier" }
+        name: { type: string }
+        category:
+          type: string
+          enum: [Reputation, "Threat Intelligence", Infrastructure, Phishing, Registration, Reference]
+        key_configured: { type: boolean }
+        call_count: { type: integer }
+        error_count: { type: integer }
+        last_call_at: { type: string, format: date-time }
+        last_error_at: { type: string, format: date-time }
+        last_error: { type: string }
+        last_duration_ms: { type: integer }
+
     PermutationResult:
       type: object
       properties:

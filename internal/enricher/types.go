@@ -41,3 +41,12 @@ type Source interface {
 	Name() string
 	Enrich(ctx context.Context, domain string) (*Finding, error)
 }
+
+// MetricsRecorder is the minimal sink for per-source telemetry. It is
+// populated at process start (via the package-level Metrics variable in
+// runner.go) and invoked from Runner.runOne for every enrichment attempt.
+// The real implementation lives in internal/metrics; kept as an interface
+// here to avoid the enricher package depending on metrics.
+type MetricsRecorder interface {
+	Record(name string, durationMs int64, err error)
+}
