@@ -99,12 +99,12 @@ func main() {
 	enricher.Metrics = providerMetrics
 	providerStartedAt := time.Now()
 	for _, s := range sources {
-		name := s.Name()
+		slug := s.Name() // Source.Name() already returns a stable lowercase slug.
 		providerMetrics.Register(metrics.Info{
-			ID:            providerID(name),
-			Name:          name,
-			Category:      providerCategory(name),
-			KeyConfigured: providerKeyConfigured(name, abusechKey),
+			ID:            slug,
+			Name:          providerDisplayName(slug),
+			Category:      providerCategory(slug),
+			KeyConfigured: providerKeyConfigured(slug, abusechKey),
 		})
 	}
 
@@ -286,48 +286,49 @@ func exposeRequestID(next http.Handler) http.Handler {
 	})
 }
 
-// providerID returns a stable slug matching lib/methodology.ts on the UI.
-func providerID(name string) string {
-	switch name {
-	case "VirusTotal":
-		return "virustotal"
-	case "Google Safe Browsing":
-		return "safebrowsing"
-	case "abuse.ch URLhaus":
-		return "urlhaus"
-	case "abuse.ch ThreatFox":
-		return "threatfox"
-	case "AlienVault OTX":
-		return "otx"
-	case "IPInfo":
-		return "ipinfo"
-	case "AbuseIPDB":
-		return "abuseipdb"
-	case "urlscan.io":
-		return "urlscan"
-	case "crt.sh Certificate Transparency":
-		return "certwatch"
-	case "OpenPhish":
-		return "openphish"
-	case "RDAP (Registration Data)":
-		return "rdap"
+// providerDisplayName turns the slug returned by Source.Name() into
+// the human-readable label shown on the methodology and /sources pages.
+func providerDisplayName(slug string) string {
+	switch slug {
+	case "virustotal":
+		return "VirusTotal"
+	case "safebrowsing":
+		return "Google Safe Browsing"
+	case "urlhaus":
+		return "abuse.ch URLhaus"
+	case "threatfox":
+		return "abuse.ch ThreatFox"
+	case "otx":
+		return "AlienVault OTX"
+	case "ipinfo":
+		return "IPInfo"
+	case "abuseipdb":
+		return "AbuseIPDB"
+	case "urlscan":
+		return "urlscan.io"
+	case "certwatch":
+		return "crt.sh Certificate Transparency"
+	case "openphish":
+		return "OpenPhish"
+	case "rdap":
+		return "RDAP (Registration Data)"
 	}
-	return strings.ToLower(strings.ReplaceAll(name, " ", "-"))
+	return slug
 }
 
 // providerCategory returns the five-category taxonomy published in the
-// methodology. Any unknown source gets "Reference".
-func providerCategory(name string) string {
-	switch name {
-	case "VirusTotal", "Google Safe Browsing":
+// methodology. Unknown slugs fall through to "Reference".
+func providerCategory(slug string) string {
+	switch slug {
+	case "virustotal", "safebrowsing":
 		return "Reputation"
-	case "abuse.ch URLhaus", "abuse.ch ThreatFox", "AlienVault OTX":
+	case "urlhaus", "threatfox", "otx":
 		return "Threat Intelligence"
-	case "IPInfo", "AbuseIPDB", "crt.sh Certificate Transparency":
+	case "ipinfo", "abuseipdb", "certwatch":
 		return "Infrastructure"
-	case "urlscan.io", "OpenPhish":
+	case "urlscan", "openphish":
 		return "Phishing"
-	case "RDAP (Registration Data)":
+	case "rdap":
 		return "Registration"
 	}
 	return "Reference"
@@ -336,25 +337,23 @@ func providerCategory(name string) string {
 // providerKeyConfigured mirrors the env-driven construction logic
 // above: sources that require a key are only "configured" when the
 // relevant environment variable is non-empty.
-func providerKeyConfigured(name, abusechKey string) bool {
-	switch name {
-	case "RDAP (Registration Data)",
-		"crt.sh Certificate Transparency",
-		"OpenPhish":
-		return true // no key needed
-	case "abuse.ch URLhaus", "abuse.ch ThreatFox":
+func providerKeyConfigured(slug, abusechKey string) bool {
+	switch slug {
+	case "rdap", "certwatch", "openphish":
+		return true // no key required
+	case "urlhaus", "threatfox":
 		return abusechKey != ""
-	case "urlscan.io":
+	case "urlscan":
 		return os.Getenv("URLSCAN_API_KEY") != "" // search works unauth too
-	case "VirusTotal":
+	case "virustotal":
 		return os.Getenv("VIRUSTOTAL_API_KEY") != ""
-	case "Google Safe Browsing":
+	case "safebrowsing":
 		return os.Getenv("GOOGLE_SAFE_BROWSING_KEY") != ""
-	case "AlienVault OTX":
+	case "otx":
 		return os.Getenv("OTX_API_KEY") != ""
-	case "IPInfo":
+	case "ipinfo":
 		return os.Getenv("IPINFO_TOKEN") != ""
-	case "AbuseIPDB":
+	case "abuseipdb":
 		return os.Getenv("ABUSEIPDB_API_KEY") != ""
 	}
 	return false

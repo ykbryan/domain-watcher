@@ -32,40 +32,43 @@ type entry struct {
 	info Info
 }
 
-// Registry is a process-wide in-memory metrics store.
+// Registry is a process-wide in-memory metrics store keyed on the
+// slug that each enricher.Source returns from Name(). The slug is the
+// stable identifier; Info.Name is the human-readable display label.
 type Registry struct {
-	mu     sync.RWMutex
-	byName map[string]*entry
+	mu   sync.RWMutex
+	byID map[string]*entry
 }
 
 // NewRegistry returns an empty registry. Providers must be registered
 // via Register before Record will track them.
 func NewRegistry() *Registry {
-	return &Registry{byName: make(map[string]*entry)}
+	return &Registry{byID: make(map[string]*entry)}
 }
 
-// Register adds or updates a provider's static metadata. Counters for
-// an existing entry are preserved.
+// Register adds or updates a provider's static metadata keyed on ID.
+// Counters for an existing entry are preserved.
 func (r *Registry) Register(info Info) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	e, ok := r.byName[info.Name]
+	e, ok := r.byID[info.ID]
 	if !ok {
-		r.byName[info.Name] = &entry{info: info}
+		r.byID[info.ID] = &entry{info: info}
 		return
 	}
 	e.mu.Lock()
-	e.info.ID = info.ID
+	e.info.Name = info.Name
 	e.info.Category = info.Category
 	e.info.KeyConfigured = info.KeyConfigured
 	e.mu.Unlock()
 }
 
-// Record matches the enricher.MetricsRecorder interface. It is a no-op
-// for providers not previously Register()ed.
-func (r *Registry) Record(name string, durationMs int64, err error) {
+// Record matches the enricher.MetricsRecorder interface. The first
+// argument is the slug from Source.Name() — identical to the Info.ID
+// the provider was registered under. Unknown slugs are a no-op.
+func (r *Registry) Record(id string, durationMs int64, err error) {
 	r.mu.RLock()
-	e, ok := r.byName[name]
+	e, ok := r.byID[id]
 	r.mu.RUnlock()
 	if !ok {
 		return
@@ -91,8 +94,8 @@ func (r *Registry) Record(name string, durationMs int64, err error) {
 // Snapshot returns a copy of all provider stats, ordered by Name.
 func (r *Registry) Snapshot() []Info {
 	r.mu.RLock()
-	entries := make([]*entry, 0, len(r.byName))
-	for _, e := range r.byName {
+	entries := make([]*entry, 0, len(r.byID))
+	for _, e := range r.byID {
 		entries = append(entries, e)
 	}
 	r.mu.RUnlock()
